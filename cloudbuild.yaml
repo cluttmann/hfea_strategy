@@ -25,23 +25,23 @@ steps:
       - --region
       - 'europe-west3'
 
-  # Step 3: Deploy the rebalance function
-  - name: 'gcr.io/cloud-builders/gcloud'
-    args:
-      - functions
-      - deploy
-      - rebalanceFunction
-      - --runtime
-      - python310
-      - --trigger-http
-      - --entry-point
-      - rebalance
-      - --timeout
-      - '540s'
-      - --memory
-      - '256MB'
-      - --region
-      - 'europe-west3'
+  # # Step 3: Deploy the rebalance function
+  # - name: 'gcr.io/cloud-builders/gcloud'
+  #   args:
+  #     - functions
+  #     - deploy
+  #     - rebalanceFunction
+  #     - --runtime
+  #     - python310
+  #     - --trigger-http
+  #     - --entry-point
+  #     - rebalance
+  #     - --timeout
+  #     - '540s'
+  #     - --memory
+  #     - '256MB'
+  #     - --region
+  #     - 'europe-west3'
 
 options:
   logging: CLOUD_LOGGING_ONLY  # Send logs to Cloud Logging only
