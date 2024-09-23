@@ -1,0 +1,49 @@
+steps:
+  # Step 1: Install dependencies
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        pip install -r requirements.txt
+
+  # Step 2: Deploy the monthly_buy function
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - functions
+      - deploy
+      - monthlyBuyFunction
+      - --runtime
+      - python310
+      - --trigger-http
+      - --entry-point
+      - monthly_buy
+      - --timeout
+      - '540s'
+      - --memory
+      - '256MB'
+      - --region
+      - $_REGION
+
+  # Step 3: Deploy the rebalance function
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - functions
+      - deploy
+      - rebalanceFunction
+      - --runtime
+      - python310
+      - --trigger-http
+      - --entry-point
+      - rebalance
+      - --timeout
+      - '540s'
+      - --memory
+      - '256MB'
+      - --region
+      - $_REGION
+
+substitutions:
+  _REGION: 'europe-west3'  # Replace with your desired region
+
+timeout: '600s'

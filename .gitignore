@@ -1,0 +1,40 @@
+# Ignore the .env file which contains sensitive credentials
+.env
+
+# Ignore Python bytecode
+__pycache__/
+*.py[cod]
+
+# Ignore virtual environment directories
+env/
+venv/
+ENV/
+VENV/
+
+# Ignore any system-specific files
+.DS_Store
+Thumbs.db
+
+# Ignore log files and other artifacts
+*.log
+*.sqlite3
+
+# Ignore Google Cloud build and deployment artifacts
+.gcloud/
+.cloudfunctions/
+
+# Ignore secret-related files for local development
+*.secret
+
+# Ignore Alpaca API keys or credential files
+*.key
+
+# Ignore the node_modules directory if you're using any JS
+node_modules/
+
+# Ignore IDE specific settings
+.vscode/
+.idea/
+
+# Ignore cache files
+*.cache
