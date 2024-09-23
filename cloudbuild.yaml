@@ -7,7 +7,6 @@ steps:
     - monthlyBuyFunction  # The name of the Cloud Function for monthly buys
     - --source=.
     - --trigger-http
-    - --project=riseupbi
     - --region=europe-west3
     - --runtime=python311
     - --timeout=540s
@@ -22,7 +21,6 @@ steps:
     - rebalanceFunction  # The name of the Cloud Function for rebalancing
     - --source=.
     - --trigger-http
-    - --project=riseupbi
     - --region=europe-west3
     - --runtime=python311
     - --timeout=540s
