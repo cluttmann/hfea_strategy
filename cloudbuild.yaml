@@ -46,4 +46,7 @@ steps:
 substitutions:
   _REGION: 'europe-west3'  # Replace with your desired region
 
+options:
+  logging: CLOUD_LOGGING_ONLY  # Send logs to Cloud Logging only
+  
 timeout: '600s'
