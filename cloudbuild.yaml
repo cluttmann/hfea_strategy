@@ -7,7 +7,7 @@ steps:
     - monthlyBuyFunction  # The name of the Cloud Function for monthly buys
     - --source=.
     - --trigger-http
-    - --region=europe-west3
+    - --region=us-central1
     - --runtime=python311
     - --timeout=540s
     - --entry-point=monthly_buy  # Entry point function in your Python code
@@ -21,7 +21,7 @@ steps:
     - rebalanceFunction  # The name of the Cloud Function for rebalancing
     - --source=.
     - --trigger-http
-    - --region=europe-west3
+    - --region=us-central1
     - --runtime=python311
     - --timeout=540s
     - --entry-point=rebalance  # Entry point function in your Python code
