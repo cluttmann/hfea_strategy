@@ -23,7 +23,7 @@ steps:
       - --memory
       - '256MB'
       - --region
-      - $_REGION
+      - 'europe-west1'
 
   # Step 3: Deploy the rebalance function
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -41,10 +41,9 @@ steps:
       - --memory
       - '256MB'
       - --region
-      - $_REGION
+      - 'europe-west1'
 
-substitutions:
-  _REGION: 'europe-west1'  # Replace with your desired region
+
 
 options:
   logging: CLOUD_LOGGING_ONLY  # Send logs to Cloud Logging only
