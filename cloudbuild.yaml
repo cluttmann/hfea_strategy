@@ -43,8 +43,6 @@ steps:
       - --region
       - 'europe-west1'
 
-
-
 options:
   logging: CLOUD_LOGGING_ONLY  # Send logs to Cloud Logging only
 
