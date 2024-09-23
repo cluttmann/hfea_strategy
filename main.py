@@ -12,6 +12,7 @@ import alpaca_trade_api as tradeapi
 
 app = Flask(__name__)
 
+
 # Function to get secrets from Google Secret Manager
 def get_secret(secret_name):
     if os.getenv('GAE_ENV', '').startswith('standard'):
