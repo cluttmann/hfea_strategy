@@ -44,9 +44,9 @@ steps:
       - $_REGION
 
 substitutions:
-  _REGION: 'europe-west3'  # Replace with your desired region
+  _REGION: 'europe-west1'  # Replace with your desired region
 
 options:
   logging: CLOUD_LOGGING_ONLY  # Send logs to Cloud Logging only
-  
+
 timeout: '600s'
