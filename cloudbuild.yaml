@@ -1,49 +1,33 @@
 steps:
-  # Step 1: Install dependencies
-  - name: 'gcr.io/cloud-builders/gcloud'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        pip install -r requirements.txt
-
-  # Step 2: Deploy the monthly_buy function
+  # Step 1: Deploy the monthlyBuyFunction
   - name: 'gcr.io/cloud-builders/gcloud'
     args:
-      - functions
-      - deploy
-      - monthlyBuyFunction
-      - --runtime
-      - python310
-      - --trigger-http
-      - --entry-point
-      - monthly_buy
-      - --timeout
-      - '540s'
-      - --memory
-      - '256MB'
-      - --region
-      - 'europe-west3'
+    - functions
+    - deploy
+    - monthlyBuyFunction  # The name of the Cloud Function for monthly buys
+    - --source=.
+    - --trigger-http
+    - --project=riseupbi
+    - --region=europe-west3
+    - --runtime=python311
+    - --timeout=540s
+    - --entry-point=monthly_buy  # Entry point function in your Python code
+    - --memory=256MB
 
-  # # Step 3: Deploy the rebalance function
-  # - name: 'gcr.io/cloud-builders/gcloud'
-  #   args:
-  #     - functions
-  #     - deploy
-  #     - rebalanceFunction
-  #     - --runtime
-  #     - python310
-  #     - --trigger-http
-  #     - --entry-point
-  #     - rebalance
-  #     - --timeout
-  #     - '540s'
-  #     - --memory
-  #     - '256MB'
-  #     - --region
-  #     - 'europe-west3'
+  # Step 2: Deploy the rebalanceFunction
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - functions
+    - deploy
+    - rebalanceFunction  # The name of the Cloud Function for rebalancing
+    - --source=.
+    - --trigger-http
+    - --project=riseupbi
+    - --region=europe-west3
+    - --runtime=python311
+    - --timeout=540s
+    - --entry-point=rebalance  # Entry point function in your Python code
+    - --memory=256MB
 
 options:
   logging: CLOUD_LOGGING_ONLY  # Send logs to Cloud Logging only
-
-timeout: '600s'
