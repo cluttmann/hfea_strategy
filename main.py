@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request
+from flask import Flask
 from google.cloud import secretmanager
 from dotenv import load_dotenv
 import alpaca_trade_api as tradeapi
