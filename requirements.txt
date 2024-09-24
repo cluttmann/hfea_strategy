@@ -1,5 +1,5 @@
 Flask
 google-cloud-secret-manager
 alpaca-trade-api
-yfinance=
+yfinance
 python-dotenv
