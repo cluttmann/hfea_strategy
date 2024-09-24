@@ -1,5 +1,5 @@
-Flask==2.1.1
+Flask==2.3.2
 google-cloud-secret-manager==2.7.2
-alpaca-trade-api==1.4.3
+alpaca-trade-api==2.3.0
 yfinance==0.2.20
-python-dotenv==0.19.2
+python-dotenv==1.0.0
