@@ -321,19 +321,19 @@ def run_local(action, env='paper'):
         return "No valid action provided. Use 'buy' or 'rebalance'."
 
 if __name__ == '__main__':
-    import argparse
-    import os
+    # import argparse
     
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--action', choices=['monthly_buy_hfea', 'rebalance_hfea', 'monthly_buy_spxl','sell_spxl_below_200sma','buy_spxl_above_200sma'], required=True, help="Action to perform: 'monthly_buy_hfea', 'rebalance_hfea', 'monthly_buy_spxl','sell_spxl_below_200sma','buy_spxl_above_200sma'")
-    parser.add_argument('--env', choices=['live', 'paper'], default='paper', help="Alpaca environment: 'live' or 'paper'")
-    parser.add_argument('--use_secret_manager', action='store_true', help="Use Google Secret Manager for API keys")
-    args = parser.parse_args()
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument('--action', choices=['monthly_buy_hfea', 'rebalance_hfea', 'monthly_buy_spxl','sell_spxl_below_200sma','buy_spxl_above_200sma'], required=True, help="Action to perform: 'monthly_buy_hfea', 'rebalance_hfea', 'monthly_buy_spxl','sell_spxl_below_200sma','buy_spxl_above_200sma'")
+    # parser.add_argument('--env', choices=['live', 'paper'], default='paper', help="Alpaca environment: 'live' or 'paper'")
+    # parser.add_argument('--use_secret_manager', action='store_true', help="Use Google Secret Manager for API keys")
+    # args = parser.parse_args()
 
-    # Run the function locally
-    result = run_local(action=args.action, env=args.env)
-    print(result)
+    # # Run the function locally
+    # result = run_local(action=args.action, env=args.env)
+    # print(result)
 
+    import os
     port = int(os.environ.get('PORT', 8080))  # Get the port from the environment or default to 8080
     app.run(host='0.0.0.0', port=port)
 
