@@ -4,10 +4,10 @@ steps:
     args:
     - functions
     - deploy
-    - monthlyBuyFunction  # The name of the Cloud Function for monthly buys
+    - monthly_buy_hfea  # The name of the Cloud Function for monthly buys
     - --source=.
     - --trigger-http
-    - --region=us-central1
+    - --region=europe-west3
     - --runtime=python310
     - --timeout=540s
     - --entry-point=monthly_buy_hfea  # Entry point function in your Python code
@@ -20,10 +20,10 @@ steps:
     args:
     - functions
     - deploy
-    - rebalanceFunction  # The name of the Cloud Function for rebalancing
+    - rebalance_hfea  # The name of the Cloud Function for rebalancing
     - --source=.
     - --trigger-http
-    - --region=us-central1
+    - --region=europe-west3
     - --runtime=python310
     - --timeout=540s
     - --entry-point=rebalance_hfea  # Entry point function in your Python code
@@ -35,10 +35,10 @@ steps:
     args:
     - functions
     - deploy
-    - rebalanceFunction  # The name of the Cloud Function for rebalancing
+    - monthly_buy_spxl  # The name of the Cloud Function for rebalancing
     - --source=.
     - --trigger-http
-    - --region=us-central1
+    - --region=europe-west3
     - --runtime=python310
     - --timeout=540s
     - --entry-point=monthly_buy_spxl  # Entry point function in your Python code
@@ -50,10 +50,10 @@ steps:
     args:
     - functions
     - deploy
-    - rebalanceFunction  # The name of the Cloud Function for rebalancing
+    - buy_spxl_above_200sma  # The name of the Cloud Function for rebalancing
     - --source=.
     - --trigger-http
-    - --region=us-central1
+    - --region=europe-west3
     - --runtime=python310
     - --timeout=540s
     - --entry-point=buy_spxl_above_200sma  # Entry point function in your Python code
@@ -65,10 +65,10 @@ steps:
     args:
     - functions
     - deploy
-    - rebalanceFunction  # The name of the Cloud Function for rebalancing
+    - sell_spxl_below_200sma  # The name of the Cloud Function for rebalancing
     - --source=.
     - --trigger-http
-    - --region=us-central1
+    - --region=europe-west3
     - --runtime=python310
     - --timeout=540s
     - --entry-point=sell_spxl_below_200sma  # Entry point function in your Python code
