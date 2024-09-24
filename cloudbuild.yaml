@@ -13,6 +13,7 @@ steps:
     - --entry-point=monthly_buy_hfea  # Entry point function in your Python code
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    - --gen1
 
 
   # Step 2: Deploy the rebalance_hfeaFunction
@@ -29,6 +30,7 @@ steps:
     - --entry-point=rebalance_hfea  # Entry point function in your Python code
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    - --gen1
 
   # Step 3: Deploy the rebalance_hfeaFunction
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -59,6 +61,8 @@ steps:
     - --entry-point=buy_spxl_above_200sma  # Entry point function in your Python code
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    - --gen1
+
 
   # Step 5: Deploy the rebalance_hfeaFunction
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -74,6 +78,8 @@ steps:
     - --entry-point=sell_spxl_below_200sma  # Entry point function in your Python code
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    - --gen1
+
 
 options:
   logging: CLOUD_LOGGING_ONLY  # Send logs to Cloud Logging only
