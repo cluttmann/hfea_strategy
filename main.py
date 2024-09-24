@@ -281,12 +281,12 @@ def buy_spxl_if_above_200sma(api):
         return "S&P 500 is below 200-SMA. No SPXL shares bought."
 
 @app.route('/monthly_buy_hfea', methods=['POST'])
-def monthly_buy(request):
+def monthly_buy_hfea(request):
     api = set_alpaca_environment(env='paper')  # or 'paper' based on your needs
     return make_monthly_buys(api)
 
 @app.route('/rebalance_hfea', methods=['POST'])
-def rebalance(request):
+def rebalance_hfea(request):
     api = set_alpaca_environment(env='paper')  # or 'paper' based on your needs
     return rebalance_portfolio(api)
 
