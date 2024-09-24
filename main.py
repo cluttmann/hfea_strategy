@@ -10,6 +10,8 @@ app = Flask(__name__)
 hfea_investment_amount = 30
 spxl_investment_amount = 70
 
+alpaca_environment = 'live'
+
 def is_running_in_cloud():
     return (
         os.getenv('GAE_ENV', '').startswith('standard') or
@@ -30,7 +32,7 @@ def get_secret(secret_name):
     return response.payload.data.decode("UTF-8")
 
 # Function to dynamically set environment (live or paper)
-def set_alpaca_environment(env='paper', use_secret_manager=True):
+def set_alpaca_environment(env, use_secret_manager=True):
     if use_secret_manager and is_running_in_cloud():
         print('cloud')
         # On Google Cloud, use Secret Manager
@@ -282,27 +284,27 @@ def buy_spxl_if_above_200sma(api):
 
 @app.route('/monthly_buy_hfea', methods=['POST'])
 def monthly_buy_hfea(request):
-    api = set_alpaca_environment(env='paper')  # or 'paper' based on your needs
+    api = set_alpaca_environment(env=alpaca_environment)  # or 'paper' based on your needs
     return make_monthly_buys(api)
 
 @app.route('/rebalance_hfea', methods=['POST'])
 def rebalance_hfea(request):
-    api = set_alpaca_environment(env='paper')  # or 'paper' based on your needs
+    api = set_alpaca_environment(env=alpaca_environment)  # or 'paper' based on your needs
     return rebalance_portfolio(api)
 
 @app.route('/monthly_buy_spxl', methods=['POST'])
 def month_buy_spxl(request):
-    api = set_alpaca_environment(env='paper')  # or 'paper' based on your needs
+    api = set_alpaca_environment(env=alpaca_environment)  # or 'paper' based on your needs
     return monthly_buy_spxl(api)
 
 @app.route('/sell_spxl_below_200sma', methods=['POST'])
 def sell_spxl_below_200sma(request):
-    api = set_alpaca_environment(env='paper')  # or 'paper' based on your needs
+    api = set_alpaca_environment(env=alpaca_environment)  # or 'paper' based on your needs
     return sell_spxl_if_below_200sma(api)
 
 @app.route('/buy_spxl_above_200sma', methods=['POST'])
 def buy_spxl_above_200sma(request):
-    api = set_alpaca_environment(env='paper')  # or 'paper' based on your needs
+    api = set_alpaca_environment(env=alpaca_environment)  # or 'paper' based on your needs
     return buy_spxl_if_above_200sma(api)
 
 def run_local(action, env='paper'):
@@ -348,3 +350,7 @@ if __name__ == '__main__':
 #python3 main.py --action sell_spxl_below_200sma --env paper
 #python3 main.py --action buy_spxl_above_200sma --env paper
 
+
+#to dos
+#check if market is open if not no action
+#adjust for daylight savings vs standard time
