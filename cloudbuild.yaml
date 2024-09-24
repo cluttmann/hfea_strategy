@@ -85,7 +85,7 @@ steps:
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/monthly_buy_hfea',
       '--http-method', 'POST',
       '--time-zone', 'UTC',
-      '--location', 'europe-west3
+      '--location', 'europe-west3'
     ]
 
   # Create Cloud Scheduler job for 'rebalance_hfea' function
@@ -96,7 +96,7 @@ steps:
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/rebalance_hfea',
       '--http-method', 'POST',
       '--time-zone', 'UTC',
-      '--location', 'europe-west3
+      '--location', 'europe-west3'
     ]
 
   # Create Cloud Scheduler job for 'monthly_buy_spxl' function
@@ -107,7 +107,7 @@ steps:
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/buy_spxl_above_200sma',
       '--http-method', 'POST',
       '--time-zone', 'UTC',
-      '--location', 'europe-west3
+      '--location', 'europe-west3'
     ]
 
   # Create Cloud Scheduler job for 'buy_spxl_above_200sma' function
@@ -118,7 +118,7 @@ steps:
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/buy_spxl_above_200sma',
       '--http-method', 'POST',
       '--time-zone', 'UTC',
-      '--location', 'europe-west3
+      '--location', 'europe-west3'
     ]
 
   # Create Cloud Scheduler job for 'sell_spxl_below_200sma' function
@@ -129,7 +129,7 @@ steps:
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/sell_spxl_below_200sma',
       '--http-method', 'POST',
       '--time-zone', 'UTC',
-      '--location', 'europe-west3
+      '--location', 'europe-west3'
     ]
 
 options:
