@@ -1,34 +1,34 @@
 steps:
   # Step 1: Deploy the monthly_buy_hfeaFunction
-  - name: 'gcr.io/cloud-builders/gcloud'
-    args:
-    - functions
-    - deploy
-    - monthly_buy_hfea  # The name of the Cloud Function for monthly buys
-    - --source=.
-    - --trigger-http
-    - --region=europe-west3
-    - --runtime=python310
-    - --timeout=540s
-    - --entry-point=monthly_buy_hfea  # Entry point function in your Python code
-    - --memory=256MB
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+  # - name: 'gcr.io/cloud-builders/gcloud'
+  #   args:
+  #   - functions
+  #   - deploy
+  #   - monthly_buy_hfea  # The name of the Cloud Function for monthly buys
+  #   - --source=.
+  #   - --trigger-http
+  #   - --region=europe-west3
+  #   - --runtime=python310
+  #   - --timeout=540s
+  #   - --entry-point=monthly_buy_hfea  # Entry point function in your Python code
+  #   - --memory=256MB
+  #   - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
 
 
   # Step 2: Deploy the rebalance_hfeaFunction
-  - name: 'gcr.io/cloud-builders/gcloud'
-    args:
-    - functions
-    - deploy
-    - rebalance_hfea  # The name of the Cloud Function for rebalancing
-    - --source=.
-    - --trigger-http
-    - --region=europe-west3
-    - --runtime=python310
-    - --timeout=540s
-    - --entry-point=rebalance_hfea  # Entry point function in your Python code
-    - --memory=256MB
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+  # - name: 'gcr.io/cloud-builders/gcloud'
+  #   args:
+  #   - functions
+  #   - deploy
+  #   - rebalance_hfea  # The name of the Cloud Function for rebalancing
+  #   - --source=.
+  #   - --trigger-http
+  #   - --region=europe-west3
+  #   - --runtime=python310
+  #   - --timeout=540s
+  #   - --entry-point=rebalance_hfea  # Entry point function in your Python code
+  #   - --memory=256MB
+  #   - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
 
 
   # Step 3: Deploy the rebalance_hfeaFunction
