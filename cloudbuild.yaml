@@ -13,7 +13,6 @@ steps:
     - --entry-point=monthly_buy_hfea  # Entry point function in your Python code
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
-    - --gen1
 
 
   # Step 2: Deploy the rebalance_hfeaFunction
@@ -30,7 +29,7 @@ steps:
     - --entry-point=rebalance_hfea  # Entry point function in your Python code
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
-    - --gen1
+
 
   # Step 3: Deploy the rebalance_hfeaFunction
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -61,7 +60,6 @@ steps:
     - --entry-point=buy_spxl_above_200sma  # Entry point function in your Python code
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
-    - --gen1
 
 
   # Step 5: Deploy the rebalance_hfeaFunction
@@ -78,8 +76,56 @@ steps:
     - --entry-point=sell_spxl_below_200sma  # Entry point function in your Python code
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
-    - --gen1
 
+# Create Cloud Scheduler job for 'monthly_buy_hfea' function
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'scheduler', 'jobs', 'create', 'http', 'monthly_buy_hfea',
+      '--schedule', '0 19 3 * *',  
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/monthly_buy_hfea',
+      '--http-method', 'POST',
+      '--time-zone', 'UTC'
+    ]
+
+  # Create Cloud Scheduler job for 'rebalance_hfea' function
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'scheduler', 'jobs', 'create', 'http', 'rebalance_hfea',
+      '--schedule', '0 19 3 1,4,7,10 *',  
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/rebalance_hfea',
+      '--http-method', 'POST',
+      '--time-zone', 'UTC'
+    ]
+
+  # Create Cloud Scheduler job for 'monthly_buy_spxl' function
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'scheduler', 'jobs', 'create', 'http', 'monthly_buy_spxl',
+      '--schedule', '0 19 3 * *',  
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/buy_spxl_above_200sma',
+      '--http-method', 'POST',
+      '--time-zone', 'UTC'
+    ]
+
+  # Create Cloud Scheduler job for 'buy_spxl_above_200sma' function
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'scheduler', 'jobs', 'create', 'http', 'buy_spxl_above_200sma',
+      '--schedule', '45,55 20 * * *',  
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/buy_spxl_above_200sma',
+      '--http-method', 'POST',
+      '--time-zone', 'UTC'
+    ]
+
+  # Create Cloud Scheduler job for 'sell_spxl_below_200sma' function
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'scheduler', 'jobs', 'create', 'http', 'sell_spxl_below_200sma',
+      '--schedule', '45,55 20 * * *',  
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/sell_spxl_below_200sma',
+      '--http-method', 'POST',
+      '--time-zone', 'UTC'
+    ]
 
 options:
   logging: CLOUD_LOGGING_ONLY  # Send logs to Cloud Logging only

@@ -8,7 +8,7 @@ import yfinance as yf
 app = Flask(__name__)
 
 hfea_investment_amount = 30
-spxl_investment_amount = 40000
+spxl_investment_amount = 70
 
 def is_running_in_cloud():
     return (
@@ -322,6 +322,8 @@ def run_local(action, env='paper'):
 
 if __name__ == '__main__':
     import argparse
+    import os
+    
     parser = argparse.ArgumentParser()
     parser.add_argument('--action', choices=['monthly_buy_hfea', 'rebalance_hfea', 'monthly_buy_spxl','sell_spxl_below_200sma','buy_spxl_above_200sma'], required=True, help="Action to perform: 'monthly_buy_hfea', 'rebalance_hfea', 'monthly_buy_spxl','sell_spxl_below_200sma','buy_spxl_above_200sma'")
     parser.add_argument('--env', choices=['live', 'paper'], default='paper', help="Alpaca environment: 'live' or 'paper'")
@@ -332,6 +334,8 @@ if __name__ == '__main__':
     result = run_local(action=args.action, env=args.env)
     print(result)
 
+    port = int(os.environ.get('PORT', 8080))  # Get the port from the environment or default to 8080
+    app.run(host='0.0.0.0', port=port)
 
 #python3 main.py --action buy --env paper
 #python3 main.py --action rebalance --env paper
