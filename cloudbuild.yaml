@@ -117,10 +117,10 @@ steps:
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
       'scheduler', 'jobs', 'update', 'http', 'buy_spxl_above_200sma',
-      '--schedule', '45,55 19 * * 1-5',  
+      '--schedule', '45,55 15 * * 1-5',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/buy_spxl_above_200sma',
       '--http-method', 'POST',
-      '--time-zone', 'UTC',
+      '--time-zone', 'America/New_York',
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
     ]
@@ -129,10 +129,10 @@ steps:
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
       'scheduler', 'jobs', 'update', 'http', 'sell_spxl_below_200sma', #use 'create' instead of 'update' for the first time
-      '--schedule', '45,55 19 * * 1-5',  
+      '--schedule', '45,55 15 * * 1-5',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/sell_spxl_below_200sma',
       '--http-method', 'POST',
-      '--time-zone', 'UTC',
+      '--time-zone', 'America/New_York',
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
     ]
