@@ -199,7 +199,7 @@ def calculate_200sma(symbol):
 def get_latest_price(symbol):
     # Fetch the real-time data for SPY
     ticker = yf.Ticker(symbol)
-    data = ticker.history(period="1m")
+    data = ticker.history(period="1d")
 
     # Get the current price
     price = data['Close'].iloc[-1]
