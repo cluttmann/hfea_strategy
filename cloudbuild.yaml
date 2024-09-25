@@ -106,7 +106,7 @@ steps:
     args: [
       'scheduler', 'jobs', 'update', 'http', 'monthly_buy_spxl',
       '--schedule', '0 19 3 * *',  
-      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/buy_spxl_above_200sma',
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/monthly_buy_spxl',
       '--http-method', 'POST',
       '--time-zone', 'UTC',
       '--location', 'europe-west3',
