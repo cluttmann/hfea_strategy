@@ -80,7 +80,7 @@ steps:
 # Create Cloud Scheduler job for 'monthly_buy_hfea' function
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'create', 'http', 'monthly_buy_hfea',
+      'scheduler', 'jobs', 'update', 'http', 'monthly_buy_hfea',
       '--schedule', '0 19 3 * *',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/monthly_buy_hfea',
       '--http-method', 'POST',
@@ -92,7 +92,7 @@ steps:
   # Create Cloud Scheduler job for 'rebalance_hfea' function
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'create', 'http', 'rebalance_hfea',
+      'scheduler', 'jobs', 'update', 'http', 'rebalance_hfea',
       '--schedule', '0 19 3 1,4,7,10 *',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/rebalance_hfea',
       '--http-method', 'POST',
@@ -104,7 +104,7 @@ steps:
   # Create Cloud Scheduler job for 'monthly_buy_spxl' function
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'create', 'http', 'monthly_buy_spxl',
+      'scheduler', 'jobs', 'update', 'http', 'monthly_buy_spxl',
       '--schedule', '0 19 3 * *',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/buy_spxl_above_200sma',
       '--http-method', 'POST',
@@ -116,7 +116,7 @@ steps:
   # Create Cloud Scheduler job for 'buy_spxl_above_200sma' function
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'create', 'http', 'buy_spxl_above_200sma',
+      'scheduler', 'jobs', 'update', 'http', 'buy_spxl_above_200sma',
       '--schedule', '45,55 19 * * 1-5',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/buy_spxl_above_200sma',
       '--http-method', 'POST',
@@ -128,7 +128,7 @@ steps:
   # Create Cloud Scheduler job for 'sell_spxl_below_200sma' function
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'create', 'http', 'sell_spxl_below_200sma',
+      'scheduler', 'jobs', 'update', 'http', 'sell_spxl_below_200sma', #use 'create' instead of 'update' for the first time
       '--schedule', '45,55 19 * * 1-5',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/sell_spxl_below_200sma',
       '--http-method', 'POST',

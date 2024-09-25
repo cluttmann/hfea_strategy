@@ -205,7 +205,7 @@ def get_latest_price(symbol):
     price = data['Close'].iloc[-1]
     return price
 
-def monthly_buy_spxl(api):
+def make_monthly_buy_spxl(api):
     
     sp_sma_200 = calculate_200sma("^GSPC")
     sp_latest_price = get_latest_price("^GSPC")
@@ -293,9 +293,9 @@ def rebalance_hfea(request):
     return rebalance_portfolio(api)
 
 @app.route('/monthly_buy_spxl', methods=['POST'])
-def month_buy_spxl(request):
+def monthly_buy_spxl(request):
     api = set_alpaca_environment(env=alpaca_environment)  # or 'paper' based on your needs
-    return monthly_buy_spxl(api)
+    return make_monthly_buy_spxl(api)
 
 @app.route('/sell_spxl_below_200sma', methods=['POST'])
 def sell_spxl_below_200sma(request):
@@ -314,7 +314,7 @@ def run_local(action, env='paper'):
     elif action == 'rebalance_hfea':
         return rebalance_portfolio(api)
     elif action == 'monthly_buy_spxl':
-        return monthly_buy_spxl(api)
+        return make_monthly_buy_spxl(api)
     elif action == 'sell_spxl_below_200sma':
         return sell_spxl_if_below_200sma(api)
     elif action == 'buy_spxl_above_200sma':
