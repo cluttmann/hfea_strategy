@@ -295,7 +295,7 @@ def sell_spxl_if_below_200sma(api, margin=0.01):
 def buy_spxl_if_above_200sma(api):
     sp_sma_200 = calculate_200sma("^GSPC")
     ticker = yf.Ticker("^GSPC")
-    data = ticker.history(period="1m")
+    data = ticker.history(period="1d")
     sp_latest_price = data['Close'].iloc[-1]
     fee_margin = 0.995
 
