@@ -148,7 +148,7 @@ def rebalance_portfolio(api):
     tmf_diff = tmf_value - target_tmf_value
 
     # Apply a margin for fees (e.g., 0.005%)
-    fee_margin = 0.995
+    fee_margin = 0.99
 
     # If UPRO is over-allocated and TMF is under-allocated, sell UPRO to buy TMF
     if upro_diff > 0 and tmf_diff < 0:
@@ -305,7 +305,7 @@ def buy_spxl_if_above_200sma(api):
         spxl_price = api.get_latest_trade("SPXL").price
         shares_to_buy = available_cash / spxl_price * fee_margin 
         
-        if shares_to_buy > 0:
+        if shares_to_buy > 0 and available_cash > 10:
             api.submit_order(
                 symbol="SPXL",
                 qty=shares_to_buy,
