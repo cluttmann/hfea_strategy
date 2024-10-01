@@ -327,7 +327,7 @@ def buy_spxl_if_above_200sma(api):
         spxl_price = api.get_latest_trade("SPXL").price
         shares_to_buy = available_cash / spxl_price * fee_margin 
         
-        if shares_to_buy > 0 and available_cash > 10:
+        if shares_to_buy > 0 and available_cash > 150:
             api.submit_order(
                 symbol="SPXL",
                 qty=shares_to_buy,
