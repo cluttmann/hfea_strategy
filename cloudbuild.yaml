@@ -164,7 +164,6 @@ steps:
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
       '--message-body', '{"index_symbol": "URTH", "index_name": "MSCI World"}',
-      '--Content-Type','application/json',  # Correctly set the Content-Type
     ]
 
   # Cloud Scheduler Job for MSCI World Index (POST method with request body)
@@ -178,7 +177,6 @@ steps:
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
       '--message-body', '{"index_symbol": "^SPX", "index_name": "S&P 500"}',
-      '--Content-Type','application/json',  # Correctly set the Content-Type
     ]
 
 options:
