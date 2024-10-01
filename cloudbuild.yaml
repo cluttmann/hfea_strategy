@@ -163,13 +163,9 @@ steps:
       '--time-zone', 'America/New_York',
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
-      '--headers', 'Content-Type=application/json'
+      '--headers', 'Content-Type=application/json',
+      '--message-body', '{"index_symbol": "URTH", "index_name": "MSCI World"}'
     ]
-    body: |
-      {
-        "index_symbol": "^SPX",
-        "index_name": "S&P 500"
-      }
 
   # Cloud Scheduler Job for MSCI World Index (POST method with request body)
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -181,14 +177,9 @@ steps:
       '--time-zone', 'America/New_York',
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
-      '--headers', 'Content-Type=application/json'
+      '--headers', 'Content-Type=application/json',
+      '--message-body', '{"index_symbol": "^SPX", "index_name": "S&P 500"}'
     ]
-    body: |
-      {
-        "index_symbol": "URTH",
-        "index_name": "MSCI World"
-      }
-
 
 options:
   logging: CLOUD_LOGGING_ONLY  # Send logs to Cloud Logging only
