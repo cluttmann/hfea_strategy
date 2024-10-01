@@ -399,7 +399,7 @@ def check_index_drop(request):
 
     # Send alert if the index has dropped 35% or more
     if drop_percentage >= 35:
-        message = f"Alert: {index_name} has dropped {drop_percentage:.2f}% from its all-time high!"
+        message = f"Alert: {index_name} has dropped {drop_percentage:.2f}% from its all-time high! Consider getting a loan with a duration of 6 to 8 years and invest 50k to 100k at ideally around 4.5% interest"
         send_telegram_message(message)
         return jsonify({"message": message}), 200
     else:
@@ -435,7 +435,7 @@ def buy_spxl_above_200sma(request):
 def index_alert(request):
     return check_index_drop(request)
 
-def run_local(action, env='paper'):
+def run_local(action, env='paper',request='test'):
     api = set_alpaca_environment(env=env, use_secret_manager=False)
     if action == 'monthly_buy_hfea':
         return make_monthly_buys(api)
@@ -456,7 +456,7 @@ if __name__ == '__main__':
     import argparse
     
     parser = argparse.ArgumentParser()
-    parser.add_argument('--action', choices=['monthly_buy_hfea', 'rebalance_hfea', 'monthly_buy_spxl','sell_spxl_below_200sma','buy_spxl_above_200sma'], required=True, help="Action to perform: 'monthly_buy_hfea', 'rebalance_hfea', 'monthly_buy_spxl','sell_spxl_below_200sma','buy_spxl_above_200sma'")
+    parser.add_argument('--action', choices=['monthly_buy_hfea', 'rebalance_hfea', 'monthly_buy_spxl','sell_spxl_below_200sma','buy_spxl_above_200sma','index_alert'], required=True, help="Action to perform: 'monthly_buy_hfea', 'rebalance_hfea', 'monthly_buy_spxl','sell_spxl_below_200sma','buy_spxl_above_200sma','index_alert'")
     parser.add_argument('--env', choices=['live', 'paper'], default='paper', help="Alpaca environment: 'live' or 'paper'")
     parser.add_argument('--use_secret_manager', action='store_true', help="Use Google Secret Manager for API keys")
     args = parser.parse_args()
