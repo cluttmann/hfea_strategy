@@ -83,7 +83,7 @@ def make_monthly_buys(api):
     investment_amount = hfea_investment_amount
 
     # Get current portfolio allocations and values from get_hfea_allocations
-    upro_diff, tmf_diff, upro_value, tmf_value, total_value, target_upro_value, target_tmf_value = get_hfea_allocations(api)
+    upro_diff, tmf_diff, upro_value, tmf_value, total_value, target_upro_value, target_tmf_value, current_upro_percent, current_tmf_percent = get_hfea_allocations(api)
 
     # Calculate how much each ETF is underweight (use the diffs returned by get_hfea_allocations)
     upro_underweight = max(0, target_upro_value - upro_value)
@@ -137,6 +137,8 @@ def make_monthly_buys(api):
         print("No TMF shares bought due to small amount.")
         send_telegram_message("No TMF shares bought due to small amount.")
 
+    upro_diff, tmf_diff, upro_value, tmf_value, total_value, target_upro_value, target_tmf_value, current_upro_percent, current_tmf_percent = get_hfea_allocations(api)
+    send_telegram_message(f"Current HFEA allocation: UPRO: {current_upro_percent:.0%} - TMF: {current_tmf_percent:.0%}")
     return "Monthly investment executed."
 
 def get_hfea_allocations(api):
@@ -147,6 +149,8 @@ def get_hfea_allocations(api):
     upro_value = positions.get("UPRO", 0)
     tmf_value = positions.get("TMF", 0)
     total_value = upro_value + tmf_value
+    current_upro_percent = upro_value/total_value
+    current_tmf_percent = tmf_value/total_value
 
     # Target values based on 55% UPRO and 45% TMF
     target_upro_value = total_value * upro_allocation
@@ -156,12 +160,12 @@ def get_hfea_allocations(api):
     upro_diff = upro_value - target_upro_value
     tmf_diff = tmf_value - target_tmf_value
     
-    return upro_diff, tmf_diff, upro_value, tmf_value, total_value, target_upro_value, target_tmf_value
+    return upro_diff, tmf_diff, upro_value, tmf_value, total_value, target_upro_value, target_tmf_value, current_upro_percent, current_tmf_percent
 
 def rebalance_portfolio(api):
 
     #Get Upro and Tmf values and their deviation from perfect allocation
-    upro_diff, tmf_diff, upro_value, tmf_value, total_value, target_upro_value, target_tmf_value = get_hfea_allocations(api)
+    upro_diff, tmf_diff, upro_value, tmf_value, total_value, target_upro_value, target_tmf_value, current_upro_percent, current_tmf_percent = get_hfea_allocations(api)
     
     # Apply a margin for fees (e.g., 0.005%)
     fee_margin = 0.99
@@ -322,7 +326,7 @@ def buy_spxl_if_above_200sma(api):
     fee_margin = 0.995
     
     positions = {p.symbol: float(p.market_value) for p in api.list_positions()}
-    spxl_value = positions.get("SPXL", 0)
+    spxl_value = round(positions.get("SPXL", 0))
 
     if sp_latest_price > sp_sma_200:
         account = api.get_account()
@@ -341,7 +345,7 @@ def buy_spxl_if_above_200sma(api):
             send_telegram_message(f"Bought {shares_to_buy:.6f} shares of SPXL with available cash.")
             return f"Bought {shares_to_buy:.6f} shares of SPXL with available cash."            
         else:
-            send_telegram_message(f"S&P 500 is above 200-SMA. No SPXL shares bought because {spxl_value} is already invested")
+            send_telegram_message(f"S&P 500 is above 200-SMA. No SPXL shares bought because {spxl_value}$ are already invested")
             return f"S&P 500 is above 200-SMA. No SPXL shares bought because {spxl_value} is already invested"
     else:
         send_telegram_message("S&P 500 is below 200-SMA. No SPXL shares bought.")
@@ -417,8 +421,8 @@ def check_index_drop(request):
         send_telegram_message(message)
         return jsonify({"message": message}), 200
     else:
-        message = f"Alert: {index_name} is within safe range ({drop_percentage:.2f}% below ATH)."
-        send_telegram_message(message)
+        #message = f"Alert: {index_name} is within safe range ({drop_percentage:.2f}% below ATH)."
+        #send_telegram_message(message)
         return jsonify({"message": f"{index_name} is within safe range ({drop_percentage:.2f}% below ATH)."}), 200
 
 
