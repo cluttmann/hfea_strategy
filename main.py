@@ -1,5 +1,5 @@
 import os
-from flask import Flask
+from flask import Flask, jsonify
 from google.cloud import secretmanager
 from dotenv import load_dotenv
 import alpaca_trade_api as tradeapi
@@ -10,6 +10,9 @@ app = Flask(__name__)
 
 hfea_investment_amount = 33
 spxl_investment_amount = 75
+
+upro_allocation = 0.55
+tmf_allocation = 0.45
 
 alpaca_environment = 'live'
 
@@ -77,13 +80,27 @@ def make_monthly_buys(api):
 
     investment_amount = hfea_investment_amount
 
-    # Determine how much to invest in each ETF
-    upro_amount = investment_amount * 0.55
-    tmf_amount = investment_amount * 0.45
+    # Get current portfolio allocations and values from get_hfea_allocations
+    upro_diff, tmf_diff, upro_value, tmf_value, total_value, target_upro_value, target_tmf_value = get_hfea_allocations(api)
 
+    # Calculate how much each ETF is underweight (use the diffs returned by get_hfea_allocations)
+    upro_underweight = max(0, target_upro_value - upro_value)
+    tmf_underweight = max(0, target_tmf_value - tmf_value)
+    # Calculate the total underweight between UPRO and TMF
+    total_underweight = upro_underweight + tmf_underweight
+
+    # If the portfolio is perfectly balanced, buy using the standard 55/45 split
+    if total_underweight == 0:
+        upro_amount = investment_amount * upro_allocation
+        tmf_amount = investment_amount * tmf_allocation
+    else:
+        # Allocate proportionally based on underweight amounts
+        upro_amount = (upro_underweight / total_underweight) * investment_amount
+        tmf_amount = (tmf_underweight / total_underweight) * investment_amount
     # Get current prices for UPRO and TMF
     upro_price = float(api.get_latest_trade("UPRO").price)
     tmf_price = float(api.get_latest_trade("TMF").price)
+    
 
     # Calculate number of shares to buy, allowing for fractional shares
     upro_shares_to_buy = upro_amount / upro_price
@@ -118,13 +135,9 @@ def make_monthly_buys(api):
         print("No TMF shares bought due to small amount.")
         send_telegram_message("No TMF shares bought due to small amount.")
 
-    print("Monthly investment executed.")
-    send_telegram_message("Monthly investment executed.")
     return "Monthly investment executed."
 
-
-def rebalance_portfolio(api):
-
+def get_hfea_allocations(api):
     # Get current portfolio positions
     positions = {p.symbol: float(p.market_value) for p in api.list_positions()}
     
@@ -133,23 +146,30 @@ def rebalance_portfolio(api):
     tmf_value = positions.get("TMF", 0)
     total_value = upro_value + tmf_value
 
+    # Target values based on 55% UPRO and 45% TMF
+    target_upro_value = total_value * upro_allocation
+    target_tmf_value = total_value * tmf_allocation
+    
+    # Determine the current deviation from the target
+    upro_diff = upro_value - target_upro_value
+    tmf_diff = tmf_value - target_tmf_value
+    
+    return upro_diff, tmf_diff, upro_value, tmf_value, total_value, target_upro_value, target_tmf_value
+
+def rebalance_portfolio(api):
+
+    #Get Upro and Tmf values and their deviation from perfect allocation
+    upro_diff, tmf_diff, upro_value, tmf_value, total_value, target_upro_value, target_tmf_value = get_hfea_allocations(api)
+    
+    # Apply a margin for fees (e.g., 0.005%)
+    fee_margin = 0.99
+
     # If the total value is 0, nothing to rebalance
     if total_value == 0:
         print("No holdings to rebalance.")
         send_telegram_message("No holdings to rebalance for HFEA Strategy.")
         return "No holdings to rebalance for HFEA Strategy."
-
-    # Target values based on 55% UPRO and 45% TMF
-    target_upro_value = total_value * 0.55
-    target_tmf_value = total_value * 0.45
     
-    # Determine the current deviation from the target
-    upro_diff = upro_value - target_upro_value
-    tmf_diff = tmf_value - target_tmf_value
-
-    # Apply a margin for fees (e.g., 0.005%)
-    fee_margin = 0.99
-
     # If UPRO is over-allocated and TMF is under-allocated, sell UPRO to buy TMF
     if upro_diff > 0 and tmf_diff < 0:
         # Determine how much UPRO to sell to buy TMF and bring it to the target
@@ -347,6 +367,45 @@ def get_chat_title():
         return None
     
 
+def get_index_data(index_symbol):
+    """Fetch the all-time high and current price for an index."""
+    # Download historical data for the index
+    data = yf.download(index_symbol, period='max')
+    
+    # Get the all-time high
+    all_time_high = data['High'].max()
+
+    # Get the current price (latest close price)
+    current_price = data['Close'].iloc[-1]
+    
+    return current_price, all_time_high
+
+def check_index_drop(request):
+    """Cloud Function that checks if an index has dropped 35% below its all-time high."""
+    
+    # Get the data from the request body (JSON format)
+    request_json = request.get_json(silent=True)
+    if request_json and 'index_symbol' in request_json and 'index_name' in request_json:
+        index_symbol = request_json['index_symbol']
+        index_name = request_json['index_name']
+    else:
+        return jsonify({"error": "Missing index_symbol or index_name in the request body"}), 400
+
+
+    current_price, all_time_high = get_index_data(index_symbol)
+    
+    # Calculate the percentage drop
+    drop_percentage = ((all_time_high - current_price) / all_time_high) * 100
+
+    # Send alert if the index has dropped 35% or more
+    if drop_percentage >= 35:
+        message = f"Alert: {index_name} has dropped {drop_percentage:.2f}% from its all-time high!"
+        send_telegram_message(message)
+        return jsonify({"message": message}), 200
+    else:
+        return jsonify({"message": f"{index_name} is within safe range ({drop_percentage:.2f}% below ATH)."}), 200
+
+
 @app.route('/monthly_buy_hfea', methods=['POST'])
 def monthly_buy_hfea(request):
     api = set_alpaca_environment(env=alpaca_environment)  # or 'paper' based on your needs
@@ -372,6 +431,10 @@ def buy_spxl_above_200sma(request):
     api = set_alpaca_environment(env=alpaca_environment)  # or 'paper' based on your needs
     return buy_spxl_if_above_200sma(api)
 
+@app.route('/index_alert', methods=['POST'])
+def index_alert(request):
+    return check_index_drop(request)
+
 def run_local(action, env='paper'):
     api = set_alpaca_environment(env=env, use_secret_manager=False)
     if action == 'monthly_buy_hfea':
@@ -384,6 +447,8 @@ def run_local(action, env='paper'):
         return sell_spxl_if_below_200sma(api)
     elif action == 'buy_spxl_above_200sma':
         return buy_spxl_if_above_200sma(api)
+    elif action == 'index_alert':
+        return check_index_drop(request)
     else:
         return "No valid action provided. Use 'buy' or 'rebalance'."
 
@@ -406,3 +471,4 @@ if __name__ == '__main__':
     #python3 main.py --action sell_spxl_below_200sma --env paper
     #python3 main.py --action buy_spxl_above_200sma --env paper
 
+#consider shifting to short term bonds when 200sma is below https://app.alpaca.markets/trade/BIL?asset_class=stocks
