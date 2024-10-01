@@ -156,7 +156,7 @@ steps:
   # Cloud Scheduler Job for S&P 500 Index (POST method with request body)
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'update', 'http', 'sp500_drop_alert',
+      'scheduler', 'jobs', 'create', 'http', 'sp500_drop_alert',
       '--schedule', '30 9-15 * * 1-5',  # Runs at the 30th minute of every hour from 9 AM to 3 PM (inclusive)
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/index_alert',
       '--http-method', 'POST',
@@ -169,7 +169,7 @@ steps:
   # Cloud Scheduler Job for MSCI World Index (POST method with request body)
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'update', 'http', 'msci_drop_alert',
+      'scheduler', 'jobs', 'create', 'http', 'msci_drop_alert',
       '--schedule', '30 9-15 * * 1-5',  # Runs at the 30th minute of every hour from 9 AM to 3 PM (inclusive)
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/index_alert',
       '--http-method', 'POST',
