@@ -320,6 +320,9 @@ def buy_spxl_if_above_200sma(api):
     data = ticker.history(period="1d")
     sp_latest_price = data['Close'].iloc[-1]
     fee_margin = 0.995
+    
+    positions = {p.symbol: float(p.market_value) for p in api.list_positions()}
+    spxl_value = positions.get("SPXL", 0)
 
     if sp_latest_price > sp_sma_200:
         account = api.get_account()
@@ -336,10 +339,10 @@ def buy_spxl_if_above_200sma(api):
                 time_in_force='day'
             )
             send_telegram_message(f"Bought {shares_to_buy:.6f} shares of SPXL with available cash.")
-            return f"Bought {shares_to_buy:.6f} shares of SPXL with available cash."
+            return f"Bought {shares_to_buy:.6f} shares of SPXL with available cash."            
         else:
-            send_telegram_message("Not enough cash to buy SPXL shares.")
-            return "Not enough cash to buy SPXL shares."
+            send_telegram_message(f"S&P 500 is above 200-SMA. No SPXL shares bought because {spxl_value} is already invested")
+            return f"S&P 500 is above 200-SMA. No SPXL shares bought because {spxl_value} is already invested"
     else:
         send_telegram_message("S&P 500 is below 200-SMA. No SPXL shares bought.")
         return "S&P 500 is below 200-SMA. No SPXL shares bought."

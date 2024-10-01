@@ -129,17 +129,17 @@ steps:
 #       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
 #     ]
 
-#   # Create Cloud Scheduler job for 'buy_spxl_above_200sma' function
-#   - name: 'gcr.io/cloud-builders/gcloud'
-#     args: [
-#       'scheduler', 'jobs', 'update', 'http', 'buy_spxl_above_200sma',
-#       '--schedule', '55 15 * * 1-5',  
-#       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/buy_spxl_above_200sma',
-#       '--http-method', 'POST',
-#       '--time-zone', 'America/New_York',
-#       '--location', 'europe-west3',
-#       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
-#     ]
+  # # Create Cloud Scheduler job for 'buy_spxl_above_200sma' function
+  # - name: 'gcr.io/cloud-builders/gcloud'
+  #   args: [
+  #     'scheduler', 'jobs', 'update', 'http', 'buy_spxl_above_200sma',
+  #     '--schedule', '55 15 * * 1-5',  
+  #     '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/buy_spxl_above_200sma',
+  #     '--http-method', 'POST',
+  #     '--time-zone', 'America/New_York',
+  #     '--location', 'europe-west3',
+  #     '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
+  #   ]
 
 #   # Create Cloud Scheduler job for 'sell_spxl_below_200sma' function
 #   - name: 'gcr.io/cloud-builders/gcloud'
