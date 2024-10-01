@@ -77,20 +77,20 @@ steps:
 #     - --memory=256MB
 #     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
 
-  # Step 6: Deploy the unified index_alert Cloud Function with Alpaca and Telegram settings
-  - name: 'gcr.io/cloud-builders/gcloud'
-    args:
-    - functions
-    - deploy
-    - index_alert  # Single Cloud Function for all indices
-    - --source=.
-    - --trigger-http
-    - --region=europe-west3
-    - --runtime=python310
-    - --timeout=540s
-    - --entry-point=index_alert  # Python function entry point
-    - --memory=256MB
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+  # # Step 6: Deploy the unified index_alert Cloud Function with Alpaca and Telegram settings
+  # - name: 'gcr.io/cloud-builders/gcloud'
+  #   args:
+  #   - functions
+  #   - deploy
+  #   - index_alert  # Single Cloud Function for all indices
+  #   - --source=.
+  #   - --trigger-http
+  #   - --region=europe-west3
+  #   - --runtime=python310
+  #   - --timeout=540s
+  #   - --entry-point=index_alert  # Python function entry point
+  #   - --memory=256MB
+  #   - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
 
 
 # # Create Cloud Scheduler job for 'monthly_buy_hfea' function
@@ -153,31 +153,31 @@ steps:
 #       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
 #     ]
 
-  # # Cloud Scheduler Job for S&P 500 Index (POST method with request body)
-  # - name: 'gcr.io/cloud-builders/gcloud'
-  #   args: [
-  #     'scheduler', 'jobs', 'update', 'http', 'sp500_drop_alert',
-  #     '--schedule', '30 9-15 * * 1-5',  # Runs at the 30th minute of every hour from 9 AM to 3 PM (inclusive)
-  #     '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/index_alert',
-  #     '--http-method', 'POST',
-  #     '--time-zone', 'America/New_York',
-  #     '--location', 'europe-west3',
-  #     '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
-  #     '--message-body', '{"index_symbol": "URTH", "index_name": "MSCI World"}',
-  #   ]
+  # Cloud Scheduler Job for S&P 500 Index (POST method with request body)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'scheduler', 'jobs', 'update', 'http', 'sp500_drop_alert',
+      '--schedule', '30 9-15 * * 1-5',  # Runs at the 30th minute of every hour from 9 AM to 3 PM (inclusive)
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/index_alert',
+      '--http-method', 'POST',
+      '--time-zone', 'America/New_York',
+      '--location', 'europe-west3',
+      '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
+      '--message-body', '{"index_symbol": "^SPX", "index_name": "S&P 500"}'
+    ]
 
-  # # Cloud Scheduler Job for MSCI World Index (POST method with request body)
-  # - name: 'gcr.io/cloud-builders/gcloud'
-  #   args: [
-  #     'scheduler', 'jobs', 'update', 'http', 'msci_drop_alert',
-  #     '--schedule', '30 9-15 * * 1-5',  # Runs at the 30th minute of every hour from 9 AM to 3 PM (inclusive)
-  #     '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/index_alert',
-  #     '--http-method', 'POST',
-  #     '--time-zone', 'America/New_York',
-  #     '--location', 'europe-west3',
-  #     '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
-  #     '--message-body', '{"index_symbol": "^SPX", "index_name": "S&P 500"}',
-  #   ]
+  # Cloud Scheduler Job for MSCI World Index (POST method with request body)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'scheduler', 'jobs', 'update', 'http', 'msci_drop_alert',
+      '--schedule', '30 9-15 * * 1-5',  # Runs at the 30th minute of every hour from 9 AM to 3 PM (inclusive)
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/index_alert',
+      '--http-method', 'POST',
+      '--time-zone', 'America/New_York',
+      '--location', 'europe-west3',
+      '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
+      '--message-body', '{"index_symbol": "URTH", "index_name": "MSCI World"}'
+    ]
 
 options:
   logging: CLOUD_LOGGING_ONLY  # Send logs to Cloud Logging only
