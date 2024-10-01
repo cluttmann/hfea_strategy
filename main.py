@@ -410,10 +410,12 @@ def check_index_drop(request):
 
     # Send alert if the index has dropped 35% or more
     if drop_percentage >= 35:
-        message = f"Alert: {index_name} has dropped {drop_percentage:.2f}% from its all-time high! Consider getting a loan with a duration of 6 to 8 years and invest 50k to 100k at ideally around 4.5% interest"
+        message = f"Alert: {index_name} has dropped {drop_percentage:.2f}% from its ATH! Consider a loan with a duration of 6 to 8 years (50k to 100k) at around 4.5% interest max"
         send_telegram_message(message)
         return jsonify({"message": message}), 200
     else:
+        message = f"Alert: {index_name} is within safe range ({drop_percentage:.2f}% below ATH)."
+        send_telegram_message(message)
         return jsonify({"message": f"{index_name} is within safe range ({drop_percentage:.2f}% below ATH)."}), 200
 
 
