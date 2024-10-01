@@ -1,4 +1,4 @@
-  steps:
+steps:
 #   #Step 1: Deploy the monthly_buy_hfeaFunction
 #   - name: 'gcr.io/cloud-builders/gcloud'
 #     args:
@@ -179,5 +179,5 @@
       '--message-body', '{"index_symbol": "^SPX", "index_name": "S&P 500"}'
     ]
 
-# options:
-#   logging: CLOUD_LOGGING_ONLY  # Send logs to Cloud Logging only
+options:
+  logging: CLOUD_LOGGING_ONLY  # Send logs to Cloud Logging only
