@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 import alpaca_trade_api as tradeapi
 import yfinance as yf
 import requests
+import json
+
 
 app = Flask(__name__)
 
@@ -383,15 +385,24 @@ def get_index_data(index_symbol):
 def check_index_drop(request):
     """Cloud Function that checks if an index has dropped 35% below its all-time high."""
     
-    # Get the data from the request body (JSON format)
-    request_json = request.get_json(silent=True)
+    # Handle case where Content-Type is not set to application/json (e.g., application/octet-stream)
+    if request.content_type == 'application/json':
+        request_json = request.get_json(silent=True)
+    else:
+        # If the Content-Type is octet-stream or undefined, attempt to decode the body manually
+        try:
+            request_json = json.loads(request.data.decode('utf-8'))
+        except Exception:
+            return jsonify({"error": "Failed to parse request body"}), 400
+
+    # Check if the required parameters are present
     if request_json and 'index_symbol' in request_json and 'index_name' in request_json:
         index_symbol = request_json['index_symbol']
         index_name = request_json['index_name']
     else:
         return jsonify({"error": "Missing index_symbol or index_name in the request body"}), 400
 
-
+    
     current_price, all_time_high = get_index_data(index_symbol)
     
     # Calculate the percentage drop

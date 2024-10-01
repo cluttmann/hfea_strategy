@@ -77,20 +77,20 @@ steps:
 #     - --memory=256MB
 #     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
 
-#   # Step 6: Deploy the unified index_alert Cloud Function with Alpaca and Telegram settings
-#   - name: 'gcr.io/cloud-builders/gcloud'
-#     args:
-#     - functions
-#     - deploy
-#     - index_alert  # Single Cloud Function for all indices
-#     - --source=.
-#     - --trigger-http
-#     - --region=europe-west3
-#     - --runtime=python310
-#     - --timeout=540s
-#     - --entry-point=index_alert  # Python function entry point
-#     - --memory=256MB
-#     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+  # Step 6: Deploy the unified index_alert Cloud Function with Alpaca and Telegram settings
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - functions
+    - deploy
+    - index_alert  # Single Cloud Function for all indices
+    - --source=.
+    - --trigger-http
+    - --region=europe-west3
+    - --runtime=python310
+    - --timeout=540s
+    - --entry-point=index_alert  # Python function entry point
+    - --memory=256MB
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
 
 
 # # Create Cloud Scheduler job for 'monthly_buy_hfea' function
