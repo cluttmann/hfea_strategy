@@ -97,10 +97,10 @@ steps:
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
       'scheduler', 'jobs', 'update', 'http', 'monthly_buy_hfea',
-      '--schedule', '0 19 3 * *',  
+      '--schedule', '45 20 3 * *',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/monthly_buy_hfea',
       '--http-method', 'POST',
-      '--time-zone', 'UTC',
+      '--time-zone', 'America/New_York',
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
     ]
@@ -109,10 +109,10 @@ steps:
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
       'scheduler', 'jobs', 'update', 'http', 'rebalance_hfea',
-      '--schedule', '0 19 3 1,4,7,10 *',  
+      '--schedule', '55 20 3 1,4,7,10 *',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/rebalance_hfea',
       '--http-method', 'POST',
-      '--time-zone', 'UTC',
+      '--time-zone', 'America/New_York',
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
     ]
@@ -121,10 +121,10 @@ steps:
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
       'scheduler', 'jobs', 'update', 'http', 'monthly_buy_spxl',
-      '--schedule', '0 19 3 * *',  
+      '--schedule', '45 20 3 * *',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/monthly_buy_spxl',
       '--http-method', 'POST',
-      '--time-zone', 'UTC',
+      '--time-zone', 'America/New_York',
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
     ]

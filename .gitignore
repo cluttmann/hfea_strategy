@@ -38,3 +38,5 @@ node_modules/
 
 # Ignore cache files
 *.cache
+upro_simulation_comparison.csv
+backtest200sma.ipynb
