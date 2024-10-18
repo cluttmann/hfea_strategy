@@ -92,6 +92,52 @@ steps:
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
 
+  # Step 7: Deploy the make_monthly_buy_tqqq
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - functions
+    - deploy
+    - make_monthly_buy_tqqq  # The name of the Cloud Function for make_monthly_buy_tqqq
+    - --source=.
+    - --trigger-http
+    - --region=europe-west3
+    - --runtime=python310
+    - --timeout=540s
+    - --entry-point=monthly_buy_tqqq  # Entry point function in your Python code
+    - --memory=256MB
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+
+  # Step 4: Deploy the buy_tqqq_if_above_200sma
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - functions
+    - deploy
+    - buy_tqqq_if_above_200sma  # The name of the Cloud Function for buy_tqqq_if_above_200sma
+    - --source=.
+    - --trigger-http
+    - --region=europe-west3
+    - --runtime=python310
+    - --timeout=540s
+    - --entry-point=buy_tqqq_above_200sma  # Entry point function in your Python code
+    - --memory=256MB
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+
+
+  # Step 5: Deploy the sell_tqqq_if_below_200sma
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - functions
+    - deploy
+    - sell_tqqq_if_below_200sma  # The name of the Cloud Function for sell_tqqq_if_below_200sma
+    - --source=.
+    - --trigger-http
+    - --region=europe-west3
+    - --runtime=python310
+    - --timeout=540s
+    - --entry-point=sell_tqqq_below_200sma  # Entry point function in your Python code
+    - --memory=256MB
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+
 
 # Create Cloud Scheduler job for 'monthly_buy_hfea' function
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -133,7 +179,7 @@ steps:
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
       'scheduler', 'jobs', 'update', 'http', 'buy_spxl_above_200sma',
-      '--schedule', '55 15 * * 1-5',  
+      '--schedule', '56 15 * * 1-5',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/buy_spxl_above_200sma',
       '--http-method', 'POST',
       '--time-zone', 'America/New_York',
@@ -145,7 +191,43 @@ steps:
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
       'scheduler', 'jobs', 'update', 'http', 'sell_spxl_below_200sma', #use 'create' instead of 'update' for the first time
-      '--schedule', '55 15 * * 1-5',  
+      '--schedule', '56 15 * * 1-5',  
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/sell_spxl_below_200sma',
+      '--http-method', 'POST',
+      '--time-zone', 'America/New_York',
+      '--location', 'europe-west3',
+      '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
+    ]
+
+  # Create Cloud Scheduler job for 'monthly_buy_tqqq' function
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'scheduler', 'jobs', 'update', 'http', 'make_monthly_buy_tqqq',
+      '--schedule', '45 20 3 * *',  
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/monthly_buy_spxl',
+      '--http-method', 'POST',
+      '--time-zone', 'America/New_York',
+      '--location', 'europe-west3',
+      '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
+    ]
+
+  # Create Cloud Scheduler job for 'buy_tqqq_above_200sma' function
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'scheduler', 'jobs', 'update', 'http', 'buy_tqqq_if_above_200sma',
+      '--schedule', '53 15 * * 1-5',  
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/buy_spxl_above_200sma',
+      '--http-method', 'POST',
+      '--time-zone', 'America/New_York',
+      '--location', 'europe-west3',
+      '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
+    ]
+
+  # Create Cloud Scheduler job for 'sell_tqqq_below_200sma' function
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'scheduler', 'jobs', 'update', 'http', 'sell_tqqq_if_below_200sma', #use 'create' instead of 'update' for the first time
+      '--schedule', '53 15 * * 1-5',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/sell_spxl_below_200sma',
       '--http-method', 'POST',
       '--time-zone', 'America/New_York',
