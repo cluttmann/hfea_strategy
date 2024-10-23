@@ -366,9 +366,7 @@ def buy_spxl_if_above_200sma(api):
 
     if sp_latest_price > sp_sma_200:
         account = api.get_account()
-        available_cash = float(account.cash)
-        spxl_price = api.get_latest_trade("SPXL").price
-        
+        available_cash = float(account.cash)        
         # If there's an SHV position, sell it first
         if shv_position > 0:
             sell_order = api.submit_order(
@@ -386,6 +384,7 @@ def buy_spxl_if_above_200sma(api):
             account = api.get_account()
             available_cash = float(account.cash)
         
+        spxl_price = api.get_latest_trade("SPXL").price
         shares_to_buy = available_cash / spxl_price
         
         if shares_to_buy > 0 and available_cash > 400: #make sure enough cash from actual 200SMA sells is available vs monthly budget
@@ -399,10 +398,12 @@ def buy_spxl_if_above_200sma(api):
             send_telegram_message(f"Bought {shares_to_buy:.6f} shares of SPXL with available cash after selling SHV.")
             return f"Bought {shares_to_buy:.6f} shares of SPXL with available cash."
         else:
-            send_telegram_message("Not enough cash to buy SPXL shares.")
-            return "Not enough cash to buy SPXL shares."
+            spxl_value = positions.get("SPXL", 0)
+            send_telegram_message(f"S&P 500 is above 200-SMA. No SPXL shares bought because of no cash but {spxl_value} is already invested")
+            return f"S&P 500 is above 200-SMA. No SPXL shares bought because of no cash but {spxl_value} is already invested"
     else:
-        send_telegram_message("S&P 500 is below 200-SMA. No SPXL shares bought.")
+        shv_value = positions.get("SHV", 0)
+        send_telegram_message(f"S&P 500 is below 200-SMA. No SPXL shares bought but {shv_value} is invested in BIL")
         return "S&P 500 is below 200-SMA. No SPXL shares bought."
 
 
@@ -527,7 +528,7 @@ def buy_tqqq_if_above_200sma(api):
 
         shares_to_buy = available_cash / tqqq_price
         
-        if shares_to_buy > 0:  # Make sure enough cash is available from sales or budget
+        if shares_to_buy > 0 and available_cash > 400:  # Make sure enough cash is available from sales or budget
             buy_order = api.submit_order(
                 symbol="TQQQ",
                 qty=shares_to_buy,
@@ -538,10 +539,13 @@ def buy_tqqq_if_above_200sma(api):
             send_telegram_message(f"Bought {shares_to_buy:.6f} shares of TQQQ with available cash.")
             return f"Bought {shares_to_buy:.6f} shares of TQQQ with available cash."
         else:
+            tqqq_value = positions.get("TQQQ", 0)
             send_telegram_message("Not enough cash to buy TQQQ shares.")
-            return "Not enough cash to buy TQQQ shares."
+            send_telegram_message(f"S&P 500 is above 200-SMA. No TQQQ shares bought because of no cash but {tqqq_value} is already invested.")
+            return f"S&P 500 is above 200-SMA. No TQQQ shares bought because of no cash but {tqqq_value} is already invested."
     else:
-        send_telegram_message("S&P 500 is below 200-SMA. No TQQQ shares bought.")
+        bil_value = positions.get("BIL", 0)
+        send_telegram_message(f"S&P 500 is below 200-SMA. No TQQQ shares bought but {bil_value} is invested in BIL")
         return "S&P 500 is below 200-SMA. No TQQQ shares bought."
 
 

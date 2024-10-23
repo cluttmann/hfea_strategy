@@ -300,3 +300,6 @@ steps:
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
     ]
+    
+options:
+  logging: CLOUD_LOGGING_ONLY  # Send logs to Cloud Logging only
