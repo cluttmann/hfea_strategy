@@ -579,10 +579,10 @@ def get_index_data(index_symbol):
     data = yf.download(index_symbol, period='max')
     
     # Get the all-time high
-    all_time_high = data['High'].max()
+    all_time_high = data['High'].max().item()
 
     # Get the current price (latest close price)
-    current_price = data['Close'].iloc[-1]
+    current_price = data['Close'].iloc[-1].item()
     
     return current_price, all_time_high
 
