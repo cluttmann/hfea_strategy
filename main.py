@@ -103,7 +103,7 @@ def make_monthly_buys(api):
         upro_amount = (upro_underweight / total_underweight) * investment_amount
         tmf_amount = (tmf_underweight / total_underweight) * investment_amount
         print(tmf_underweight/ total_underweight)
-    print(upro_amount, tmf_amount)
+
     # Get current prices for UPRO and TMF
     upro_price = float(api.get_latest_trade("UPRO").price)
     tmf_price = float(api.get_latest_trade("TMF").price)
@@ -252,7 +252,7 @@ def rebalance_portfolio(api):
 # Function to calculate 200-SMA using yfinance
 def calculate_200sma(symbol):
     data = yf.download(symbol, period="1y", interval="1d")  # Download 1 year of daily data
-    sma_200 = data['Close'].rolling(window=200).mean().iloc[-1]
+    sma_200 = data['Close'].rolling(window=200).mean().iloc[-1].item()
     return sma_200
 
 # Function to get latest s&p price using yfinance
@@ -587,7 +587,7 @@ def get_index_data(index_symbol):
     return current_price, all_time_high
 
 def check_index_drop(request):
-    """Cloud Function that checks if an index has dropped 35% below its all-time high."""
+    """Cloud Function that checks if an index has dropped 30% below its all-time high."""
     
     # Handle case where Content-Type is not set to application/json (e.g., application/octet-stream)
     if request.content_type == 'application/json':
@@ -612,8 +612,8 @@ def check_index_drop(request):
     # Calculate the percentage drop
     drop_percentage = ((all_time_high - current_price) / all_time_high) * 100
 
-    # Send alert if the index has dropped 35% or more
-    if drop_percentage >= 35:
+    # Send alert if the index has dropped 30% or more
+    if drop_percentage >= 30:
         message = f"Alert: {index_name} has dropped {drop_percentage:.2f}% from its ATH! Consider a loan with a duration of 6 to 8 years (50k to 100k) at around 4.5% interest max"
         send_telegram_message(message)
         return jsonify({"message": message}), 200
