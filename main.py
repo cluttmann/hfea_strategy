@@ -11,10 +11,12 @@ import time
 
 app = Flask(__name__)
 
-#Strategy would be to allocate 50% to the SPXL SMA 200 Strategy, 20% to the TQQQ SMA 200 Strategy and 30% to HFEA
-hfea_investment_amount = 105
-spxl_investment_amount = 175
-tqqq_investment_amount = 70  # Monthly investment of 70 euros for TQQQ
+monthly_invest = 350
+
+#Strategy would be to allocate 50% to the SPXL SMA 200 Strategy, 15% to the TQQQ SMA 200 Strategy and 30% to HFEA
+hfea_investment_amount = monthly_invest * 0.35
+spxl_investment_amount = monthly_invest * 0.5
+tqqq_investment_amount = monthly_invest * 0.15
 
 upro_allocation = 0.55
 tmf_allocation = 0.45
