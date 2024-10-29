@@ -14,12 +14,13 @@ app = Flask(__name__)
 monthly_invest = 350
 
 #Strategy would be to allocate 50% to the SPXL SMA 200 Strategy, 15% to the TQQQ SMA 200 Strategy and 30% to HFEA
-hfea_investment_amount = monthly_invest * 0.35
+hfea_investment_amount = monthly_invest * 0.4
 spxl_investment_amount = monthly_invest * 0.5
-tqqq_investment_amount = monthly_invest * 0.15
+tqqq_investment_amount = monthly_invest * 0.1
 
-upro_allocation = 0.55
-tmf_allocation = 0.45
+upro_allocation = 0.45
+tmf_allocation = 0.25
+kmlm_allocation = 0.3
 
 alpaca_environment = 'live'
 
@@ -84,98 +85,82 @@ def get_telegram_secrets():
         
         
 def make_monthly_buys(api):
-
     investment_amount = hfea_investment_amount
 
     # Get current portfolio allocations and values from get_hfea_allocations
-    upro_diff, tmf_diff, upro_value, tmf_value, total_value, target_upro_value, target_tmf_value, current_upro_percent, current_tmf_percent = get_hfea_allocations(api)
+    upro_diff, tmf_diff, kmlm_diff, upro_value, tmf_value, kmlm_value, total_value, target_upro_value, target_tmf_value, target_kmlm_value, current_upro_percent, current_tmf_percent, current_kmlm_percent = get_hfea_allocations(api)
 
-    # Calculate how much each ETF is underweight (use the diffs returned by get_hfea_allocations)
+    # Calculate underweight amounts
     upro_underweight = max(0, target_upro_value - upro_value)
     tmf_underweight = max(0, target_tmf_value - tmf_value)
-    # Calculate the total underweight between UPRO and TMF
-    total_underweight = upro_underweight + tmf_underweight
+    kmlm_underweight = max(0, target_kmlm_value - kmlm_value)
+    total_underweight = upro_underweight + tmf_underweight + kmlm_underweight
 
-    # If the portfolio is perfectly balanced, buy using the standard 55/45 split
+    # If perfectly balanced, use standard split
     if total_underweight == 0:
         upro_amount = investment_amount * upro_allocation
         tmf_amount = investment_amount * tmf_allocation
+        kmlm_amount = investment_amount * kmlm_allocation
     else:
         # Allocate proportionally based on underweight amounts
         upro_amount = (upro_underweight / total_underweight) * investment_amount
         tmf_amount = (tmf_underweight / total_underweight) * investment_amount
-        print(tmf_underweight/ total_underweight)
+        kmlm_amount = (kmlm_underweight / total_underweight) * investment_amount
 
-    # Get current prices for UPRO and TMF
+    # Get current prices for UPRO, TMF, and KMLM
     upro_price = float(api.get_latest_trade("UPRO").price)
     tmf_price = float(api.get_latest_trade("TMF").price)
-    
+    kmlm_price = float(api.get_latest_trade("KMLM").price)
 
-    # Calculate number of shares to buy, allowing for fractional shares
+    # Calculate number of shares to buy
     upro_shares_to_buy = upro_amount / upro_price
     tmf_shares_to_buy = tmf_amount / tmf_price
+    kmlm_shares_to_buy = kmlm_amount / kmlm_price
 
     # Execute market orders
-    if upro_shares_to_buy > 0:
-        api.submit_order(
-            symbol="UPRO",
-            qty=upro_shares_to_buy,
-            side='buy',
-            type='market',
-            time_in_force='day'
-        )
-        print(f"Bought {upro_shares_to_buy:.6f} shares of UPRO.")
-        send_telegram_message(f"Bought {upro_shares_to_buy:.6f} shares of UPRO.")
-    else:
-        print("No UPRO shares bought due to small amount.")
-        send_telegram_message("No UPRO shares bought due to small amount.")
+    for symbol, qty in [("UPRO", upro_shares_to_buy), ("TMF", tmf_shares_to_buy), ("KMLM", kmlm_shares_to_buy)]:
+        if qty > 0:
+            api.submit_order(symbol=symbol, qty=qty, side='buy', type='market', time_in_force='day')
+            print(f"Bought {qty:.6f} shares of {symbol}.")
+            send_telegram_message(f"Bought {qty:.6f} shares of {symbol}.")
+        else:
+            print(f"No shares of {symbol} bought due to small amount.")
+            send_telegram_message(f"No shares of {symbol} bought due to small amount.")
 
-    if tmf_shares_to_buy > 0:
-        api.submit_order(
-            symbol="TMF",
-            qty=tmf_shares_to_buy,
-            side='buy',
-            type='market',
-            time_in_force='day'
-        )
-        print(f"Bought {tmf_shares_to_buy:.6f} shares of TMF.")
-        send_telegram_message(f"Bought {tmf_shares_to_buy:.6f} shares of TMF.")
-    else:
-        print("No TMF shares bought due to small amount.")
-        send_telegram_message("No TMF shares bought due to small amount.")
-
-    upro_diff, tmf_diff, upro_value, tmf_value, total_value, target_upro_value, target_tmf_value, current_upro_percent, current_tmf_percent = get_hfea_allocations(api)
-    send_telegram_message(f"Current HFEA allocation: UPRO: {current_upro_percent:.0%} - TMF: {current_tmf_percent:.0%}")
+    # Report updated allocations
+    send_telegram_message(f"Current HFEA allocation: UPRO: {current_upro_percent:.0%} - TMF: {current_tmf_percent:.0%} - KMLM: {current_kmlm_percent:.0%}")
     return "Monthly investment executed."
 
 def get_hfea_allocations(api):
-    # Get current portfolio positions
     positions = {p.symbol: float(p.market_value) for p in api.list_positions()}
-    
-    # Calculate total portfolio value from UPRO and TMF only
     upro_value = positions.get("UPRO", 0)
     tmf_value = positions.get("TMF", 0)
-    total_value = upro_value + tmf_value
-    current_upro_percent = upro_value/total_value
-    current_tmf_percent = tmf_value/total_value
+    kmlm_value = positions.get("KMLM", 0)
+    total_value = upro_value + tmf_value + kmlm_value
 
-    # Target values based on 55% UPRO and 45% TMF
+    # Calculate current and target allocations
+    current_upro_percent = upro_value / total_value
+    current_tmf_percent = tmf_value / total_value
+    current_kmlm_percent = kmlm_value / total_value
     target_upro_value = total_value * upro_allocation
     target_tmf_value = total_value * tmf_allocation
-    
-    # Determine the current deviation from the target
+    target_kmlm_value = total_value * kmlm_allocation
+
+    # Calculate deviations
     upro_diff = upro_value - target_upro_value
     tmf_diff = tmf_value - target_tmf_value
+    kmlm_diff = kmlm_value - target_kmlm_value
     
-    return upro_diff, tmf_diff, upro_value, tmf_value, total_value, target_upro_value, target_tmf_value, current_upro_percent, current_tmf_percent
+    return (upro_diff, tmf_diff, kmlm_diff, upro_value, tmf_value, kmlm_value, total_value,
+            target_upro_value, target_tmf_value, target_kmlm_value, current_upro_percent,
+            current_tmf_percent, current_kmlm_percent)
 
 def rebalance_portfolio(api):
-
-    #Get Upro and Tmf values and their deviation from perfect allocation
-    upro_diff, tmf_diff, upro_value, tmf_value, total_value, target_upro_value, target_tmf_value, current_upro_percent, current_tmf_percent = get_hfea_allocations(api)
+    # Get UPRO, TMF, and KMLM values and deviations from target allocation
+    upro_diff, tmf_diff, kmlm_diff, upro_value, tmf_value, kmlm_value, total_value, target_upro_value, target_tmf_value, target_kmlm_value, current_upro_percent, current_tmf_percent, current_kmlm_percent = get_hfea_allocations(api)
     
-    # Apply a margin for fees (e.g., 0.005%)
-    fee_margin = 0.99
+    # Apply a margin for fees (e.g., 0.5%)
+    fee_margin = 0.995
 
     # If the total value is 0, nothing to rebalance
     if total_value == 0:
@@ -183,73 +168,64 @@ def rebalance_portfolio(api):
         send_telegram_message("No holdings to rebalance for HFEA Strategy.")
         return "No holdings to rebalance for HFEA Strategy."
     
-    # If UPRO is over-allocated and TMF is under-allocated, sell UPRO to buy TMF
-    if upro_diff > 0 and tmf_diff < 0:
-        # Determine how much UPRO to sell to buy TMF and bring it to the target
-        upro_shares_to_sell = (min(upro_diff, abs(tmf_diff)) / float(api.get_latest_trade("UPRO").price)) 
-        tmf_shares_to_buy = (upro_shares_to_sell * float(api.get_latest_trade("UPRO").price) / float(api.get_latest_trade("TMF").price)) * fee_margin
+    # Define trade parameters for each ETF
+    rebalance_actions = []
+
+    # If UPRO is over-allocated, adjust TMF or KMLM if under-allocated
+    if upro_diff > 0:
+        if tmf_diff < 0:
+            upro_shares_to_sell = min(upro_diff, abs(tmf_diff)) / float(api.get_latest_trade("UPRO").price)
+            tmf_shares_to_buy = (upro_shares_to_sell * float(api.get_latest_trade("UPRO").price) / float(api.get_latest_trade("TMF").price)) * fee_margin
+            rebalance_actions.append(("UPRO", upro_shares_to_sell, 'sell'))
+            rebalance_actions.append(("TMF", tmf_shares_to_buy, 'buy'))
         
-        if upro_shares_to_sell > 0:
-            api.submit_order(
-                symbol="UPRO",
-                qty=upro_shares_to_sell,
-                side='sell',
-                type='market',
-                time_in_force='day'
-            )
-            print(f"Sold {upro_shares_to_sell:.6f} shares of UPRO to rebalance.")
-            send_telegram_message(f"Sold {upro_shares_to_sell:.6f} shares of UPRO to rebalance.")
+        if kmlm_diff < 0:
+            upro_shares_to_sell = min(upro_diff, abs(kmlm_diff)) / float(api.get_latest_trade("UPRO").price)
+            kmlm_shares_to_buy = (upro_shares_to_sell * float(api.get_latest_trade("UPRO").price) / float(api.get_latest_trade("KMLM").price)) * fee_margin
+            rebalance_actions.append(("UPRO", upro_shares_to_sell, 'sell'))
+            rebalance_actions.append(("KMLM", kmlm_shares_to_buy, 'buy'))
 
-
-        if tmf_shares_to_buy > 0:
-            api.submit_order(
-                symbol="TMF",
-                qty=tmf_shares_to_buy,
-                side='buy',
-                type='market',
-                time_in_force='day'
-            )
-            print(f"Bought {tmf_shares_to_buy:.6f} shares of TMF to rebalance.")
-            send_telegram_message(f"Bought {tmf_shares_to_buy:.6f} shares of TMF to rebalance.")
-
-
-    # If TMF is over-allocated and UPRO is under-allocated, sell TMF to buy UPRO
-    elif tmf_diff > 0 and upro_value < target_upro_value:
-        # Determine how much TMF to sell to buy UPRO and bring it to the target
-        tmf_shares_to_sell = (min(tmf_diff, abs(upro_diff)) / float(api.get_latest_trade("TMF").price)) 
-        upro_shares_to_buy = (tmf_shares_to_sell * float(api.get_latest_trade("TMF").price) / float(api.get_latest_trade("UPRO").price)) * fee_margin
+    # If TMF is over-allocated, adjust UPRO or KMLM if under-allocated
+    if tmf_diff > 0:
+        if upro_diff < 0:
+            tmf_shares_to_sell = min(tmf_diff, abs(upro_diff)) / float(api.get_latest_trade("TMF").price)
+            upro_shares_to_buy = (tmf_shares_to_sell * float(api.get_latest_trade("TMF").price) / float(api.get_latest_trade("UPRO").price)) * fee_margin
+            rebalance_actions.append(("TMF", tmf_shares_to_sell, 'sell'))
+            rebalance_actions.append(("UPRO", upro_shares_to_buy, 'buy'))
         
-        if tmf_shares_to_sell > 0:
-            api.submit_order(
-                symbol="TMF",
-                qty=tmf_shares_to_sell,
-                side='sell',
-                type='market',
-                time_in_force='day'
-            )
-            print(f"Sold {tmf_shares_to_sell:.6f} shares of TMF to rebalance.")
-            send_telegram_message(f"Sold {tmf_shares_to_sell:.6f} shares of TMF to rebalance.")
+        if kmlm_diff < 0:
+            tmf_shares_to_sell = min(tmf_diff, abs(kmlm_diff)) / float(api.get_latest_trade("TMF").price)
+            kmlm_shares_to_buy = (tmf_shares_to_sell * float(api.get_latest_trade("TMF").price) / float(api.get_latest_trade("KMLM").price)) * fee_margin
+            rebalance_actions.append(("TMF", tmf_shares_to_sell, 'sell'))
+            rebalance_actions.append(("KMLM", kmlm_shares_to_buy, 'buy'))
 
+    # If KMLM is over-allocated, adjust UPRO or TMF if under-allocated
+    if kmlm_diff > 0:
+        if upro_diff < 0:
+            kmlm_shares_to_sell = min(kmlm_diff, abs(upro_diff)) / float(api.get_latest_trade("KMLM").price)
+            upro_shares_to_buy = (kmlm_shares_to_sell * float(api.get_latest_trade("KMLM").price) / float(api.get_latest_trade("UPRO").price)) * fee_margin
+            rebalance_actions.append(("KMLM", kmlm_shares_to_sell, 'sell'))
+            rebalance_actions.append(("UPRO", upro_shares_to_buy, 'buy'))
+        
+        if tmf_diff < 0:
+            kmlm_shares_to_sell = min(kmlm_diff, abs(tmf_diff)) / float(api.get_latest_trade("KMLM").price)
+            tmf_shares_to_buy = (kmlm_shares_to_sell * float(api.get_latest_trade("KMLM").price) / float(api.get_latest_trade("TMF").price)) * fee_margin
+            rebalance_actions.append(("KMLM", kmlm_shares_to_sell, 'sell'))
+            rebalance_actions.append(("TMF", tmf_shares_to_buy, 'buy'))
 
-        if upro_shares_to_buy > 0:
-            api.submit_order(
-                symbol="UPRO",
-                qty=upro_shares_to_buy,
-                side='buy',
-                type='market',
-                time_in_force='day'
-            )
-            print(f"Bought {upro_shares_to_buy:.6f} shares of UPRO to rebalance.")
-            send_telegram_message(f"Bought {upro_shares_to_buy:.6f} shares of UPRO to rebalance.")
-
-
-    else:
-        print(f"No rebalancing performed. Portfolio is already balanced or no significant deviation. ")
-        send_telegram_message(f"No rebalancing performed. Portfolio is already balanced or no significant deviation. Only {upro_shares_to_buy:.6f} shares of UPRO would have been bought. Only {tmf_shares_to_sell:.6f} shares of TMF would have been bought")
-
-
+    # Execute rebalancing actions
+    for symbol, qty, action in rebalance_actions:
+        if qty > 0:
+            order = api.submit_order(symbol=symbol, qty=qty, side=action, type='market', time_in_force='day')
+            action_verb = "Bought" if action == 'buy' else "Sold"
+            wait_for_order_fill(api, order.id)
+            print(f"{action_verb} {qty:.6f} shares of {symbol} to rebalance.")
+            send_telegram_message(f"{action_verb} {qty:.6f} shares of {symbol} to rebalance.")
+    
+    # Report completion of rebalancing check
     print("Rebalance check completed.")
     return "Rebalance executed."
+
 
 # Function to calculate 200-SMA using yfinance
 def calculate_200sma(symbol):
