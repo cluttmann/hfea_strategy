@@ -82,8 +82,6 @@ def get_telegram_secrets():
         
     return telegram_key, chat_id
         
-        
-        
 def make_monthly_buys(api):
     investment_amount = hfea_investment_amount
 
