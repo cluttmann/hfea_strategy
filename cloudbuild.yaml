@@ -204,7 +204,7 @@ steps:
     args: [
       'scheduler', 'jobs', 'update', 'http', 'make_monthly_buy_tqqq',
       '--schedule', '45 20 3 * *',  
-      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/monthly_buy_spxl',
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/make_monthly_buy_tqqq',
       '--http-method', 'POST',
       '--time-zone', 'America/New_York',
       '--location', 'europe-west3',
@@ -216,7 +216,7 @@ steps:
     args: [
       'scheduler', 'jobs', 'update', 'http', 'buy_tqqq_if_above_200sma',
       '--schedule', '53 15 * * 1-5',  
-      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/buy_spxl_above_200sma',
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/buy_tqqq_if_above_200sma',
       '--http-method', 'POST',
       '--time-zone', 'America/New_York',
       '--location', 'europe-west3',
@@ -228,7 +228,7 @@ steps:
     args: [
       'scheduler', 'jobs', 'update', 'http', 'sell_tqqq_if_below_200sma', #use 'create' instead of 'update' for the first time
       '--schedule', '53 15 * * 1-5',  
-      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/sell_spxl_below_200sma',
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/sell_tqqq_if_below_200sma',
       '--http-method', 'POST',
       '--time-zone', 'America/New_York',
       '--location', 'europe-west3',
