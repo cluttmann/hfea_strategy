@@ -156,6 +156,15 @@ def get_hfea_allocations(api):
             current_tmf_percent, current_kmlm_percent)
 
 def rebalance_portfolio(api):
+    
+    clock = api.get_clock()
+    now_open = clock.is_open
+    next_open = clock.next_open
+    
+    if not now_open:
+        print(f"Market is closed today. Skipping Rebalancing. Please try again on {next_open}")
+        send_telegram_message(f"Market closed today. Skipping Rebalancing. Please try again on {next_open}")
+        return "Market closed today."
     # Get UPRO, TMF, and KMLM values and deviations from target allocation
     upro_diff, tmf_diff, kmlm_diff, upro_value, tmf_value, kmlm_value, total_value, target_upro_value, target_tmf_value, target_kmlm_value, current_upro_percent, current_tmf_percent, current_kmlm_percent = get_hfea_allocations(api)
     
@@ -286,6 +295,15 @@ def make_monthly_buy_spxl(api):
 
 # Function to sell SPXL and buy SHV if S&P 500 is significantly below its 200-SMA
 def sell_spxl_if_below_200sma(api, margin=0.01):
+    
+    clock = api.get_clock()
+    now_open = clock.is_open
+    
+    if not now_open:
+        print("Market is closed today. Skipping 200SMA.")
+        send_telegram_message("Market closed today. Skipping 200SMA.")
+        return "Market closed today."
+    
     sp_sma_200 = calculate_200sma("^GSPC")
     sp_latest_price = get_latest_price("^GSPC")
 
@@ -336,6 +354,15 @@ def sell_spxl_if_below_200sma(api, margin=0.01):
 
 # Function to buy SPXL with all available cash if S&P 500 is above its 200-SMA
 def buy_spxl_if_above_200sma(api):
+    
+    clock = api.get_clock()
+    now_open = clock.is_open
+
+    if not now_open:
+        print("Market is closed today. Skipping 200SMA.")
+        send_telegram_message("Market closed today. Skipping 200SMA.")
+        return "Market closed today."
+    
     sp_sma_200 = calculate_200sma("^GSPC")
     sp_latest_price = get_latest_price("^GSPC")
     
@@ -426,6 +453,15 @@ def make_monthly_buy_tqqq(api):
 
 
 def sell_tqqq_if_below_200sma(api, margin=0.01):
+    
+    clock = api.get_clock()
+    now_open = clock.is_open
+    
+    if not now_open:
+        print("Market is closed today. Skipping 200SMA.")
+        send_telegram_message("Market closed today. Skipping 200SMA.")
+        return "Market closed today."
+    
     sp_sma_200 = calculate_200sma("^GSPC")
     sp_latest_price = get_latest_price("^GSPC")
 
@@ -475,6 +511,15 @@ def sell_tqqq_if_below_200sma(api, margin=0.01):
 
 
 def buy_tqqq_if_above_200sma(api):
+    
+    clock = api.get_clock()
+    now_open = clock.is_open
+    
+    if not now_open:
+        print("Market is closed today. Skipping 200SMA.")
+        send_telegram_message("Market closed today. Skipping 200SMA.")
+        return "Market closed today."
+    
     sp_sma_200 = calculate_200sma("^GSPC")
     sp_latest_price = get_latest_price("^GSPC")
 
