@@ -90,6 +90,7 @@ def make_monthly_buys(api):
     investment_amount = hfea_investment_amount
 
     if not check_trading_day(mode="monthly"):
+        print("Not first trading day of the month")
         return "Not first trading day of the month"
     # Get current portfolio allocations and values from get_hfea_allocations
     upro_diff, tmf_diff, kmlm_diff, upro_value, tmf_value, kmlm_value, total_value, target_upro_value, target_tmf_value, target_kmlm_value, current_upro_percent, current_tmf_percent, current_kmlm_percent = get_hfea_allocations(api)
@@ -162,6 +163,7 @@ def get_hfea_allocations(api):
 def rebalance_portfolio(api):
     
     if not check_trading_day(mode="quarterly"):
+        print("Not first trading day of the month in this Quarter")
         return "Not first trading day of the month in this Quarter"
     # Get UPRO, TMF, and KMLM values and deviations from target allocation
     upro_diff, tmf_diff, kmlm_diff, upro_value, tmf_value, kmlm_value, total_value, target_upro_value, target_tmf_value, target_kmlm_value, current_upro_percent, current_tmf_percent, current_kmlm_percent = get_hfea_allocations(api)
@@ -294,7 +296,8 @@ def check_trading_day(mode="daily"):
 def make_monthly_buy_spxl(api):
 
     if not check_trading_day(mode="monthly"):
-        return "Not first trading day of the month in this Quarter"
+        print("Not first trading day of the month")
+        return "Not first trading day of the month"
     
     sp_sma_200 = calculate_200sma("^GSPC")
     sp_latest_price = get_latest_price("^GSPC")
