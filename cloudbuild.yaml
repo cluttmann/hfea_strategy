@@ -143,7 +143,7 @@ steps:
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
       'scheduler', 'jobs', 'update', 'http', 'monthly_buy_hfea',
-      '--schedule', '0 12 1-7 * *	',  
+      '--schedule', '0 12 1-7 * *',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/monthly_buy_hfea',
       '--http-method', 'POST',
       '--time-zone', 'America/New_York',
