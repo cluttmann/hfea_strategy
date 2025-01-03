@@ -26,7 +26,7 @@ kmlm_allocation = 0.3
 #Based on this https://www.reddit.com/r/LETFs/comments/1dyl49a/2024_rletfs_best_portfolio_competition_results/
 #and this: https://testfol.io/?d=eJyNT9tKw0AQ%2FZUyzxGStBUaEEGkL1otog8iJYzJJF072a2TtbWE%2FLsTQy8igss%2B7M45cy4NlOxekecoWNWQNFB7FJ%2Fm6AkSiCaT0VkY6YUAyOb7eRzGx3m%2FsUGGJAr1BID5W2psweiNs5AUyDUFkGG9LNhtIQmPn7QQelfFZ0LhnaqJYza2TLfG5h33PGwDWDvxhWPjNOJLAxarLsUV2WxZoax0zdgN1f7abEyuOZXm5UM9hbQc2oymvc2ds6Rsb7IVSS%2FWvxWr1zsvCq5JMrL%2Bu027CCAXLDVzGxyMn%2BYP94Ob2e1s8Dib%2Ft%2F80PFv%2B0u%2BGJ5GGI072wNnVXH1eYoPwx%2B4Z%2F9bIx6ftli0X39%2BpPY%3D
 
-alpaca_environment = 'live'
+alpaca_environment = 'paper'
 
 def is_running_in_cloud():
     return (
@@ -89,6 +89,8 @@ def get_telegram_secrets():
 def make_monthly_buys(api):
     investment_amount = hfea_investment_amount
 
+    if not check_trading_day(mode="monthly"):
+        return "Not first trading day of the month"
     # Get current portfolio allocations and values from get_hfea_allocations
     upro_diff, tmf_diff, kmlm_diff, upro_value, tmf_value, kmlm_value, total_value, target_upro_value, target_tmf_value, target_kmlm_value, current_upro_percent, current_tmf_percent, current_kmlm_percent = get_hfea_allocations(api)
 
@@ -247,9 +249,6 @@ def get_latest_price(symbol):
     # Get the current price
     price = data['Close'].iloc[-1]
     return price
-
-import datetime
-import pandas_market_calendars as mcal
 
 def check_trading_day(mode="daily"):
     """
