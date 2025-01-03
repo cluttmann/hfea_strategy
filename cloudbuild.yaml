@@ -107,43 +107,43 @@ steps:
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
 
-  # Step 4: Deploy the buy_tqqq_if_above_200sma
-  - name: 'gcr.io/cloud-builders/gcloud'
-    args:
-    - functions
-    - deploy
-    - buy_tqqq_if_above_200sma  # The name of the Cloud Function for buy_tqqq_if_above_200sma
-    - --source=.
-    - --trigger-http
-    - --region=europe-west3
-    - --runtime=python310
-    - --timeout=540s
-    - --entry-point=buy_tqqq_above_200sma  # Entry point function in your Python code
-    - --memory=256MB
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+  # # Step 4: Deploy the buy_tqqq_if_above_200sma
+  # - name: 'gcr.io/cloud-builders/gcloud'
+  #   args:
+  #   - functions
+  #   - deploy
+  #   - buy_tqqq_if_above_200sma  # The name of the Cloud Function for buy_tqqq_if_above_200sma
+  #   - --source=.
+  #   - --trigger-http
+  #   - --region=europe-west3
+  #   - --runtime=python310
+  #   - --timeout=540s
+  #   - --entry-point=buy_tqqq_above_200sma  # Entry point function in your Python code
+  #   - --memory=256MB
+  #   - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
 
 
-  # Step 5: Deploy the sell_tqqq_if_below_200sma
-  - name: 'gcr.io/cloud-builders/gcloud'
-    args:
-    - functions
-    - deploy
-    - sell_tqqq_if_below_200sma  # The name of the Cloud Function for sell_tqqq_if_below_200sma
-    - --source=.
-    - --trigger-http
-    - --region=europe-west3
-    - --runtime=python310
-    - --timeout=540s
-    - --entry-point=sell_tqqq_below_200sma  # Entry point function in your Python code
-    - --memory=256MB
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+  # # Step 5: Deploy the sell_tqqq_if_below_200sma
+  # - name: 'gcr.io/cloud-builders/gcloud'
+  #   args:
+  #   - functions
+  #   - deploy
+  #   - sell_tqqq_if_below_200sma  # The name of the Cloud Function for sell_tqqq_if_below_200sma
+  #   - --source=.
+  #   - --trigger-http
+  #   - --region=europe-west3
+  #   - --runtime=python310
+  #   - --timeout=540s
+  #   - --entry-point=sell_tqqq_below_200sma  # Entry point function in your Python code
+  #   - --memory=256MB
+  #   - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
 
 
 # Create Cloud Scheduler job for 'monthly_buy_hfea' function
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
       'scheduler', 'jobs', 'update', 'http', 'monthly_buy_hfea',
-      '--schedule', '45 20 3 * *',  
+      '--schedule', '0 12 1-7 * *	',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/monthly_buy_hfea',
       '--http-method', 'POST',
       '--time-zone', 'America/New_York',
@@ -155,7 +155,7 @@ steps:
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
       'scheduler', 'jobs', 'update', 'http', 'rebalance_hfea',
-      '--schedule', '55 20 3 1,4,7,10 *',  
+      '--schedule', '0 14 1-7 1,4,7,10 *',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/rebalance_hfea',
       '--http-method', 'POST',
       '--time-zone', 'America/New_York',
@@ -167,7 +167,7 @@ steps:
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
       'scheduler', 'jobs', 'update', 'http', 'monthly_buy_spxl',
-      '--schedule', '45 20 3 * *',  
+      '--schedule', '0 12 1-7 * *',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/monthly_buy_spxl',
       '--http-method', 'POST',
       '--time-zone', 'America/New_York',

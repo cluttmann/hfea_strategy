@@ -7,13 +7,15 @@ import yfinance as yf
 import requests
 import json
 import time
+import pandas_market_calendars as mcal
+import datetime
 
 
 app = Flask(__name__)
 
-monthly_invest = 350
+monthly_invest = 400
 
-#Strategy would be to allocate 50% to the SPXL SMA 200 Strategy, 15% to the TQQQ SMA 200 Strategy and 30% to HFEA
+#Strategy would be to allocate 50% to the SPXL SMA 200 Strategy and 50% to HFEA
 hfea_investment_amount = monthly_invest * 0.5
 spxl_investment_amount = monthly_invest * 0.5
 #tqqq_investment_amount = monthly_invest * 0.1
@@ -21,6 +23,8 @@ spxl_investment_amount = monthly_invest * 0.5
 upro_allocation = 0.45
 tmf_allocation = 0.25
 kmlm_allocation = 0.3
+#Based on this https://www.reddit.com/r/LETFs/comments/1dyl49a/2024_rletfs_best_portfolio_competition_results/
+#and this: https://testfol.io/?d=eJyNT9tKw0AQ%2FZUyzxGStBUaEEGkL1otog8iJYzJJF072a2TtbWE%2FLsTQy8igss%2B7M45cy4NlOxekecoWNWQNFB7FJ%2Fm6AkSiCaT0VkY6YUAyOb7eRzGx3m%2FsUGGJAr1BID5W2psweiNs5AUyDUFkGG9LNhtIQmPn7QQelfFZ0LhnaqJYza2TLfG5h33PGwDWDvxhWPjNOJLAxarLsUV2WxZoax0zdgN1f7abEyuOZXm5UM9hbQc2oymvc2ds6Rsb7IVSS%2FWvxWr1zsvCq5JMrL%2Bu027CCAXLDVzGxyMn%2BYP94Ob2e1s8Dib%2Ft%2F80PFv%2B0u%2BGJ5GGI072wNnVXH1eYoPwx%2B4Z%2F9bIx6ftli0X39%2BpPY%3D
 
 alpaca_environment = 'live'
 
@@ -155,14 +159,8 @@ def get_hfea_allocations(api):
 
 def rebalance_portfolio(api):
     
-    clock = api.get_clock()
-    now_open = clock.is_open
-    next_open = clock.next_open
-    
-    if not now_open:
-        print(f"Market is closed today. Skipping Rebalancing. Please try again on {next_open}")
-        send_telegram_message(f"Market closed today. Skipping Rebalancing. Please try again on {next_open}")
-        return "Market closed today."
+    if not check_trading_day(mode="quarterly"):
+        return "Not first trading day of the month in this Quarter"
     # Get UPRO, TMF, and KMLM values and deviations from target allocation
     upro_diff, tmf_diff, kmlm_diff, upro_value, tmf_value, kmlm_value, total_value, target_upro_value, target_tmf_value, target_kmlm_value, current_upro_percent, current_tmf_percent, current_kmlm_percent = get_hfea_allocations(api)
     
@@ -250,7 +248,54 @@ def get_latest_price(symbol):
     price = data['Close'].iloc[-1]
     return price
 
+import datetime
+import pandas_market_calendars as mcal
+
+def check_trading_day(mode="daily"):
+    """
+    Check if today is a trading day, the first trading day of the month, or the first trading day of the quarter.
+
+    :param mode: "daily" for a regular trading day, "monthly" for the first trading day of the month,
+                 "quarterly" for the first trading day of the quarter.
+    :return: True if the condition is met, False otherwise.
+    """
+    # Get current date
+    today = datetime.datetime.now()
+
+    # Load the NYSE market calendar
+    nyse = mcal.get_calendar('NYSE')
+
+    # Check if the market is open today
+    schedule = nyse.schedule(start_date=today.date(), end_date=today.date())
+    if schedule.empty:
+        return False  # Market is closed today (e.g., weekend or holiday)
+
+    if mode == "daily":
+        return True  # It's a trading day
+
+    # Check if it's the first trading day of the month
+    if mode == "monthly":
+        first_day_of_month = today.replace(day=1)
+        schedule = nyse.schedule(start_date=first_day_of_month, end_date=first_day_of_month + datetime.timedelta(days=6))
+        first_trading_day = schedule.index[0].date()
+        return today.date() == first_trading_day
+
+    # Check if it's the first trading day of the quarter
+    if mode == "quarterly":
+        first_day_of_quarter = today.replace(day=1)
+        if today.month not in [1, 4, 7, 10]:
+            return False  # Not the first month of a quarter
+        schedule = nyse.schedule(start_date=first_day_of_quarter, end_date=first_day_of_quarter + datetime.timedelta(days=6))
+        first_trading_day = schedule.index[0].date()
+        return today.date() == first_trading_day
+
+    raise ValueError("Invalid mode. Use 'daily', 'monthly', or 'quarterly'.")
+
+
 def make_monthly_buy_spxl(api):
+
+    if not check_trading_day(mode="monthly"):
+        return "Not first trading day of the month in this Quarter"
     
     sp_sma_200 = calculate_200sma("^GSPC")
     sp_latest_price = get_latest_price("^GSPC")
@@ -294,10 +339,7 @@ def make_monthly_buy_spxl(api):
 # Function to sell SPXL and buy SHV if S&P 500 is significantly below its 200-SMA
 def sell_spxl_if_below_200sma(api, margin=0.01):
     
-    clock = api.get_clock()
-    now_open = clock.is_open
-    
-    if not now_open:
+    if not check_trading_day(mode="daily"):
         print("Market is closed today. Skipping 200SMA.")
         send_telegram_message("Market closed today. Skipping 200SMA.")
         return "Market closed today."
@@ -352,11 +394,8 @@ def sell_spxl_if_below_200sma(api, margin=0.01):
 
 # Function to buy SPXL with all available cash if S&P 500 is above its 200-SMA
 def buy_spxl_if_above_200sma(api):
-    
-    clock = api.get_clock()
-    now_open = clock.is_open
 
-    if not now_open:
+    if not check_trading_day(mode="daily"):
         print("Market is closed today. Skipping 200SMA.")
         send_telegram_message("Market closed today. Skipping 200SMA.")
         return "Market closed today."
@@ -452,10 +491,7 @@ def buy_spxl_if_above_200sma(api):
 
 # def sell_tqqq_if_below_200sma(api, margin=0.01):
     
-#     clock = api.get_clock()
-#     now_open = clock.is_open
-    
-#     if not now_open:
+#     if not check_trading_day(mode="daily"):
 #         print("Market is closed today. Skipping 200SMA.")
 #         send_telegram_message("Market closed today. Skipping 200SMA.")
 #         return "Market closed today."
@@ -510,10 +546,7 @@ def buy_spxl_if_above_200sma(api):
 
 # def buy_tqqq_if_above_200sma(api):
     
-#     clock = api.get_clock()
-#     now_open = clock.is_open
-    
-#     if not now_open:
+#     if not check_trading_day(mode="daily"):
 #         print("Market is closed today. Skipping 200SMA.")
 #         send_telegram_message("Market closed today. Skipping 200SMA.")
 #         return "Market closed today."
