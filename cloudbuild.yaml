@@ -263,3 +263,4 @@ steps:
 
 options:
   logging: CLOUD_LOGGING_ONLY  # Send logs to Cloud Logging only
+  machineType: 'E2_HIGHCPU_32'
