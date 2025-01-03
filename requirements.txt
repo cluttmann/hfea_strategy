@@ -5,4 +5,4 @@ google-cloud-secret-manager==2.7.2
 python-dotenv==1.0.0
 yfinance==0.2.46
 requests
-pandas-market-calendars==4.1.4
+pandas-market-calendars==4.5.1
