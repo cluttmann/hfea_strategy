@@ -43,3 +43,5 @@ backtest200sma.ipynb
 tradingbot/
 main-project-419210-21fa3c721003.json
 alpaca_statement.ipynb
+realized_gains.csv
+activities.csv
