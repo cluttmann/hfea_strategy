@@ -74,7 +74,7 @@ steps:
     - --region=europe-west3
     - --runtime=python310
     - --timeout=540s
-    - --entry-point=monthly_buy_dfo  # Entry point function in your Python code
+    - --entry-point=monthly_buy_efo  # Entry point function in your Python code
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
