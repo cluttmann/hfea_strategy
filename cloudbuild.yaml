@@ -13,7 +13,7 @@ steps:
     - --entry-point=monthly_buy_hfea  # Entry point function in your Python code
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
-
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   #Step 2: Deploy the rebalance_hfeaFunction
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -29,7 +29,7 @@ steps:
     - --entry-point=rebalance_hfea  # Entry point function in your Python code
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
-
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # Step 3: Deploy the monthly_buy_spxl
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -45,37 +45,87 @@ steps:
     - --entry-point=monthly_buy_spxl  # Entry point function in your Python code
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
-  # Step 4: Deploy the buy_spxl_above_200sma
+  # Deploy the monthly_buy_eet
   - name: 'gcr.io/cloud-builders/gcloud'
     args:
     - functions
     - deploy
-    - buy_spxl_above_200sma  # The name of the Cloud Function for rebalancing
+    - monthly_buy_eet  # The name of the Cloud Function
     - --source=.
     - --trigger-http
     - --region=europe-west3
     - --runtime=python310
     - --timeout=540s
-    - --entry-point=buy_spxl_above_200sma  # Entry point function in your Python code
+    - --entry-point=monthly_buy_eet  # Entry point function in your Python code
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
-
-  # Step 5: Deploy the sell_spxl_below_200sma
+  # Deploy the monthly_buy_efo
   - name: 'gcr.io/cloud-builders/gcloud'
     args:
     - functions
     - deploy
-    - sell_spxl_below_200sma  # The name of the Cloud Function for rebalancing
+    - monthly_buy_efo  # The name of the Cloud Function
     - --source=.
     - --trigger-http
     - --region=europe-west3
     - --runtime=python310
     - --timeout=540s
-    - --entry-point=sell_spxl_below_200sma  # Entry point function in your Python code
+    - --entry-point=monthly_buy_dfo  # Entry point function in your Python code
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
+
+  # Step 4: Deploy the daily_trade_spxl_200sma
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - functions
+    - deploy
+    - daily_trade_spxl_200sma  # The name of the Cloud Function for rebalancing
+    - --source=.
+    - --trigger-http
+    - --region=europe-west3
+    - --runtime=python310
+    - --timeout=540s
+    - --entry-point=daily_trade_spxl_200sma  # Entry point function in your Python code
+    - --memory=256MB
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
+
+  # Step 4: Deploy the daily_trade_eet_200sma
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - functions
+    - deploy
+    - daily_trade_eet_200sma  # The name of the Cloud Function for rebalancing
+    - --source=.
+    - --trigger-http
+    - --region=europe-west3
+    - --runtime=python310
+    - --timeout=540s
+    - --entry-point=daily_trade_eet_200sma  # Entry point function in your Python code
+    - --memory=256MB
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
+
+  # Step 4: Deploy the daily_trade_efo_200sma
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - functions
+    - deploy
+    - daily_trade_efo_200sma  # The name of the Cloud Function for rebalancing
+    - --source=.
+    - --trigger-http
+    - --region=europe-west3
+    - --runtime=python310
+    - --timeout=540s
+    - --entry-point=daily_trade_efo_200sma  # Entry point function in your Python code
+    - --memory=256MB
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # Step 6: Deploy the unified index_alert Cloud Function with Alpaca and Telegram settings
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -91,6 +141,7 @@ steps:
     - --entry-point=index_alert  # Python function entry point
     - --memory=256MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # # Step 7: Deploy the make_monthly_buy_tqqq
   # - name: 'gcr.io/cloud-builders/gcloud'
@@ -150,6 +201,7 @@ steps:
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
     ]
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # Create Cloud Scheduler job for 'rebalance_hfea' function
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -162,6 +214,7 @@ steps:
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
     ]
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # Create Cloud Scheduler job for 'monthly_buy_spxl' function
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -174,30 +227,47 @@ steps:
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
     ]
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
+
 
   # Create Cloud Scheduler job for 'buy_spxl_above_200sma' function
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'update', 'http', 'buy_spxl_above_200sma',
+      'scheduler', 'jobs', 'update', 'http', 'daily_trade_spxl_200sma',
       '--schedule', '56 15 * * 1-5',  
-      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/buy_spxl_above_200sma',
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/daily_trade_spxl_200sma',
       '--http-method', 'POST',
       '--time-zone', 'America/New_York',
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
     ]
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
-  # Create Cloud Scheduler job for 'sell_spxl_below_200sma' function
+  # Create Cloud Scheduler job for 'buy_spxl_above_200sma' function
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'update', 'http', 'sell_spxl_below_200sma', #use 'create' instead of 'update' for the first time
+      'scheduler', 'jobs', 'update', 'http', 'daily_trade_eet_200sma',
       '--schedule', '56 15 * * 1-5',  
-      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/sell_spxl_below_200sma',
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/daily_trade_eet_200sma',
       '--http-method', 'POST',
       '--time-zone', 'America/New_York',
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
     ]
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
+
+  # Create Cloud Scheduler job for 'buy_spxl_above_200sma' function
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'scheduler', 'jobs', 'update', 'http', 'daily_trade_efo_200sma',
+      '--schedule', '56 15 * * 1-5',  
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/daily_trade_efo_200sma',
+      '--http-method', 'POST',
+      '--time-zone', 'America/New_York',
+      '--location', 'europe-west3',
+      '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
+    ]
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # # Create Cloud Scheduler job for 'monthly_buy_tqqq' function
   # - name: 'gcr.io/cloud-builders/gcloud'
