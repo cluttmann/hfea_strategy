@@ -233,7 +233,7 @@ steps:
   # Create Cloud Scheduler job for 'buy_spxl_above_200sma' function
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'create', 'http', 'daily_trade_spxl_200sma',
+      'scheduler', 'jobs', 'update', 'http', 'daily_trade_spxl_200sma',
       '--schedule', '56 15 * * 1-5',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/daily_trade_spxl_200sma',
       '--http-method', 'POST',
@@ -246,7 +246,7 @@ steps:
   # Create Cloud Scheduler job for 'buy_spxl_above_200sma' function
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'create', 'http', 'daily_trade_eet_200sma',
+      'scheduler', 'jobs', 'update', 'http', 'daily_trade_eet_200sma',
       '--schedule', '56 15 * * 1-5',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/daily_trade_eet_200sma',
       '--http-method', 'POST',
@@ -259,7 +259,7 @@ steps:
   # Create Cloud Scheduler job for 'buy_spxl_above_200sma' function
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'create', 'http', 'daily_trade_efo_200sma',
+      'scheduler', 'jobs', 'update', 'http', 'daily_trade_efo_200sma',
       '--schedule', '56 15 * * 1-5',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/daily_trade_efo_200sma',
       '--http-method', 'POST',
