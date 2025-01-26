@@ -15,9 +15,18 @@ app = Flask(__name__)
 
 monthly_invest = 400
 
+strategy_allocations = {"hfea_allo": 0.4,
+                        "spxl_allo": 0.4,
+                        "eet_allo" : 0.1,
+                        "efo_allo" : 0.1}
+
+
 #Strategy would be to allocate 50% to the SPXL SMA 200 Strategy and 50% to HFEA
-hfea_investment_amount = monthly_invest * 0.5
-spxl_investment_amount = monthly_invest * 0.5
+hfea_investment_amount = monthly_invest * strategy_allocations["hfea_allo"]
+spxl_investment_amount = monthly_invest * strategy_allocations["spxl_allo"]
+eet_investment_amount = monthly_invest * strategy_allocations["eet_allo"]
+efo_investment_amount = monthly_invest * strategy_allocations["efo_allo"]
+
 #tqqq_investment_amount = monthly_invest * 0.1
 
 upro_allocation = 0.45
@@ -27,6 +36,7 @@ kmlm_allocation = 0.3
 #and this: https://testfol.io/?d=eJyNT9tKw0AQ%2FZUyzxGStBUaEEGkL1otog8iJYzJJF072a2TtbWE%2FLsTQy8igss%2B7M45cy4NlOxekecoWNWQNFB7FJ%2Fm6AkSiCaT0VkY6YUAyOb7eRzGx3m%2FsUGGJAr1BID5W2psweiNs5AUyDUFkGG9LNhtIQmPn7QQelfFZ0LhnaqJYza2TLfG5h33PGwDWDvxhWPjNOJLAxarLsUV2WxZoax0zdgN1f7abEyuOZXm5UM9hbQc2oymvc2ds6Rsb7IVSS%2FWvxWr1zsvCq5JMrL%2Bu027CCAXLDVzGxyMn%2BYP94Ob2e1s8Dib%2Ft%2F80PFv%2B0u%2BGJ5GGI072wNnVXH1eYoPwx%2B4Z%2F9bIx6ftli0X39%2BpPY%3D
 
 alpaca_environment = 'live'
+margin=0.01 #band around the 200sma to avoid too many trades
 
 def is_running_in_cloud():
     return (
@@ -292,318 +302,149 @@ def check_trading_day(mode="daily"):
 
     raise ValueError("Invalid mode. Use 'daily', 'monthly', or 'quarterly'.")
 
-
-def make_monthly_buy_spxl(api):
-
+    
+def monthly_buying_sma(api,symbol):
     if not check_trading_day(mode="monthly"):
-        print("Not first trading day of the month")
         return "Not first trading day of the month"
     
-    sp_sma_200 = calculate_200sma("^GSPC")
-    sp_latest_price = get_latest_price("^GSPC")
+    if symbol == "SPXL":
+        sma_200 = calculate_200sma("^GSPC")
+        latest_price = get_latest_price("^GSPC")
+        investment_amount = spxl_investment_amount
+    elif symbol == "EET":
+        sma_200 = calculate_200sma("EEM")
+        latest_price = get_latest_price("EEM")
+        investment_amount = eet_investment_amount       
+    elif symbol == "EFO":
+        sma_200 = calculate_200sma("EFA")
+        latest_price = get_latest_price("EFA")
+        investment_amount = efo_investment_amount
 
-    investment_amount = spxl_investment_amount
-
-    if sp_latest_price > sp_sma_200:
-        spxl_price = api.get_latest_trade("SPXL").price
-        shares_to_buy = investment_amount / spxl_price
+    print(investment_amount, latest_price, sma_200)
+    if latest_price > sma_200 * (1 + margin):
+        price = api.get_latest_trade(symbol).price
+        print(price)
+        shares_to_buy = investment_amount / price
         
         if shares_to_buy > 0:
             api.submit_order(
-                symbol="SPXL",
+                symbol=symbol,
                 qty=shares_to_buy,
                 side='buy',
                 type='market',
                 time_in_force='day'
             )
-            send_telegram_message(f"Bought {shares_to_buy:.6f} shares of SPXL.")
-            return f"Bought {shares_to_buy:.6f} shares of SPXL."
+            send_telegram_message(f"Bought {shares_to_buy:.6f} shares of {symbol}.")
+            return f"Bought {shares_to_buy:.6f} shares of {symbol}."
         else:
-            send_telegram_message("Amount too small to buy SPXL shares.")
-            print("Amount too small to buy SPXL shares.")
-            return "Amount too small to buy SPXL shares."
+            send_telegram_message(f"Amount too small to buy {symbol} shares.")
+            return f"Amount too small to buy {symbol} shares."
     else:
-        shv_price = api.get_latest_trade("SHV").price
-        shv_shares_to_buy = investment_amount / shv_price
-        
-        if shv_shares_to_buy > 0:
-            api.submit_order(
-                symbol="SHV",
-                qty=shv_shares_to_buy,
-                side='buy',
-                type='market',
-                time_in_force='day'
-            )
-        send_telegram_message("S&P 500 is below 200-SMA. No SPXL shares bought. Bought {shares_to_buy:.6f} shares of SHV")
-        print("S&P 500 is below 200-SMA. No SPXL shares bought. Bought {shares_to_buy:.6f} shares of SHV")
-        return "S&P 500 is below 200-SMA. No SPXL shares bought."
+        send_telegram_message(f"Index is significantly below 200-SMA and no monthly invest was done into {symbol}")
+        return f"Index is significantly below 200-SMA and no monthly invest was done into {symbol}"  
 
-# Function to sell SPXL and buy SHV if S&P 500 is significantly below its 200-SMA
-def sell_spxl_if_below_200sma(api, margin=0.01):
-    
+def daily_trade_sma(api,symbol):
     if not check_trading_day(mode="daily"):
-        print("Market is closed today. Skipping 200SMA.")
-        send_telegram_message("Market closed today. Skipping 200SMA.")
+        send_telegram_message(f"Market closed today. Skipping 200SMA. for {symbol}")
         return "Market closed today."
     
-    sp_sma_200 = calculate_200sma("^GSPC")
-    sp_latest_price = get_latest_price("^GSPC")
-
-    if sp_latest_price < sp_sma_200 * (1 - margin):
+    if symbol == "SPXL":
+        sma_200 = calculate_200sma("^GSPC")
+        latest_price = get_latest_price("^GSPC")
+    elif symbol == "EET":
+        sma_200 = calculate_200sma("EEM")
+        latest_price = get_latest_price("EEM")       
+    elif symbol == "EFO":
+        sma_200 = calculate_200sma("EFA")
+        latest_price = get_latest_price("EFA")
+    
+    if latest_price < sma_200 * (1 - margin):
         positions = api.list_positions()
-        spxl_position = next((p for p in positions if p.symbol == "SPXL"), None)
+        position = next((p for p in positions if p.symbol == symbol), None)
         
-        if spxl_position:
-            shares_to_sell = float(spxl_position.qty)
+        if position:
+            shares_to_sell = float(position.qty)
             # Sell all SPXL shares
             sell_order = api.submit_order(
-                symbol="SPXL",
+                symbol=symbol,
                 qty=shares_to_sell,
                 side='sell',
                 type='market',
                 time_in_force='day'
             )
-            send_telegram_message(f"Sold all {shares_to_sell:.6f} shares of SPXL because S&P 500 is significantly below 200-SMA.")
+            send_telegram_message(f"Sold all {shares_to_sell:.6f} shares of {symbol} because Index is significantly below 200-SMA.")
             
             # Wait for the sell order to be filled
-            wait_for_order_fill(api, sell_order.id)
-            
-            # Buy SHV with all available cash
-            account = api.get_account()
-            available_cash = float(account.cash)
-            shv_price = api.get_latest_trade("SHV").price
-            shv_shares_to_buy = available_cash / shv_price
-            
-            if shv_shares_to_buy > 0 and available_cash > 400:
-                buy_order = api.submit_order(
-                    symbol="SHV",
-                    qty=shv_shares_to_buy,
-                    side='buy',
-                    type='market',
-                    time_in_force='day'
-                )
-                send_telegram_message(f"Bought {shv_shares_to_buy:.6f} shares of SHV with available cash after selling SPXL.")
-                return f"Sold {shares_to_sell:.6f} shares of SPXL and bought {shv_shares_to_buy:.6f} shares of SHV."
-            else:
-                send_telegram_message("Not enough cash to buy SHV shares.")
-                return "Not enough cash to buy SHV shares."
+            wait_for_order_fill(api, sell_order.id)  
         else:
-            send_telegram_message("No SPXL position to sell.")
-            return "No SPXL position to sell."
-    else:
-        send_telegram_message("S&P 500 is not significantly below 200-SMA. No SPXL shares sold.")
-        return "S&P 500 is not significantly below 200-SMA. No SPXL shares sold."
-
-# Function to buy SPXL with all available cash if S&P 500 is above its 200-SMA
-def buy_spxl_if_above_200sma(api):
-
-    if not check_trading_day(mode="daily"):
-        print("Market is closed today. Skipping 200SMA.")
-        send_telegram_message("Market closed today. Skipping 200SMA.")
-        return "Market closed today."
-    
-    sp_sma_200 = calculate_200sma("^GSPC")
-    sp_latest_price = get_latest_price("^GSPC")
-    
-    positions = {p.symbol: float(p.qty) for p in api.list_positions()}
-    shv_position = positions.get("SHV", 0)
-
-    if sp_latest_price > sp_sma_200:
+            send_telegram_message(f"Index is significantly below 200-SMA and no {symbol} position to sell.")
+            return f"Index is significantly below 200-SMA and no {symbol} position to sell."
+    elif latest_price > sma_200 * (1 + margin):
         account = api.get_account()
         available_cash = float(account.cash)        
-        # If there's an SHV position, sell it first
-        if shv_position > 0:
-            sell_order = api.submit_order(
-                symbol="SHV",
-                qty=shv_position,
-                side='sell',
-                type='market',
-                time_in_force='day'
-            )
-            send_telegram_message(f"Sold all {shv_position:.6f} shares of SHV to buy SPXL.")
-            # Wait for the sell order to be filled
-            wait_for_order_fill(api, sell_order.id)
-
-            # Update the available cash after selling SHV
-            account = api.get_account()
-            available_cash = float(account.cash)
         
-        spxl_price = api.get_latest_trade("SPXL").price
-        shares_to_buy = available_cash / spxl_price
+        price = api.get_latest_trade(symbol).price
+        shares_to_buy = available_cash / price
         
         if shares_to_buy > 0 and available_cash > 2000: #make sure enough cash from actual 200SMA sells is available vs monthly budget
             buy_order = api.submit_order(
-                symbol="SPXL",
+                symbol=symbol,
                 qty=shares_to_buy,
                 side='buy',
                 type='market',
                 time_in_force='day'
             )
-            send_telegram_message(f"Bought {shares_to_buy:.6f} shares of SPXL with available cash after selling SHV.")
-            return f"Bought {shares_to_buy:.6f} shares of SPXL with available cash."
+            send_telegram_message(f"Bought {shares_to_buy:.6f} shares of {symbol} with available cash")
+            return f"Bought {shares_to_buy:.6f} shares of {symbol} with available cash."
         else:
-            spxl_value = positions.get("SPXL", 0)
-            send_telegram_message(f"S&P 500 is above 200-SMA. No SPXL shares bought because of no cash but {spxl_value} is already invested")
-            return f"S&P 500 is above 200-SMA. No SPXL shares bought because of no cash but {spxl_value} is already invested"
+            position_value = positions.get(symbol, 0)
+            send_telegram_message(f"Index is above 200-SMA. No {symbol} shares bought because of no cash but {position_value} is already invested")
+            return f"Index is above 200-SMA. No {symbol} shares bought because of no cash but {position_value} is already invested"
     else:
-        shv_value = positions.get("SHV", 0)
-        send_telegram_message(f"S&P 500 is below 200-SMA. No SPXL shares bought but {shv_value} is invested in BIL")
-        return "S&P 500 is below 200-SMA. No SPXL shares bought."
+        send_telegram_message(f"Index is not significantly below or above 200-SMA. No {symbol} shares sold or bought")
+        return f"Index is not significantly below or above 200-SMA. No {symbol} shares sold or bought"
+   
+# def make_monthly_buy_spxl(api,symbol):
+#     result = monthly_buying_sma(api,symbol)
+#     print(result)
 
+# def make_monthly_buy_eet(api,symbol):
+#     result = monthly_buying_sma(api,symbol)
+#     print(result)
 
-# def make_monthly_buy_tqqq(api):
-#     sp_sma_200 = calculate_200sma("^GSPC")
-#     sp_latest_price = get_latest_price("^GSPC")
+# def make_monthly_buy_efo(api,symbol):
+#     result = monthly_buying_sma(api,symbol)
+#     print(result)
 
-#     if sp_latest_price > sp_sma_200:
-#         tqqq_price = api.get_latest_trade("TQQQ").price
-#         shares_to_buy = tqqq_investment_amount / tqqq_price
-        
-#         if shares_to_buy > 0:
-#             api.submit_order(
-#                 symbol="TQQQ",
-#                 qty=shares_to_buy,
-#                 side='buy',
-#                 type='market',
-#                 time_in_force='day'
-#             )
-#             send_telegram_message(f"Bought {shares_to_buy:.6f} shares of TQQQ.")
-#             return f"Bought {shares_to_buy:.6f} shares of TQQQ."
-#         else:
-#             send_telegram_message("Amount too small to buy TQQQ shares.")
-#             return "Amount too small to buy TQQQ shares."
-#     else:
-#         bil_price = api.get_latest_trade("BIL").price
-#         bil_shares_to_buy = tqqq_investment_amount / bil_price
+# # Function to sell SPXL if S&P 500 is significantly below its 200-SMA
+# def sell_spxl_if_below_200sma(api, symbol):
+#     result = daily_trade_sma(api, symbol)
+#     print(result)
 
-#         if bil_shares_to_buy > 0:
-#             api.submit_order(
-#                 symbol="BIL",
-#                 qty=bil_shares_to_buy,
-#                 side='buy',
-#                 type='market',
-#                 time_in_force='day'
-#             )
-#             send_telegram_message(f"S&P 500 is below 200-SMA. Bought {bil_shares_to_buy:.6f} shares of BIL instead of TQQQ.")
-#             return f"S&P 500 is below 200-SMA. Bought {bil_shares_to_buy:.6f} shares of BIL."
-#         else:
-#             send_telegram_message("Amount too small to buy BIL shares.")
-#             return "Amount too small to buy BIL shares."
+# # Function to buy SPXL with all available cash if S&P 500 is above its 200-SMA
+# def buy_spxl_if_above_200sma(api, symbol):
+#     result = daily_trade_sma(api, symbol)
+#     print(result)
 
-
-# def sell_tqqq_if_below_200sma(api, margin=0.01):
+# # Function to buy EET with all available cash if EEM is above its 200-SMA
+# def buy_eet_if_above_200sma(api, symbol):
+#     result = daily_trade_sma(api, symbol)
+#     print(result)
     
-#     if not check_trading_day(mode="daily"):
-#         print("Market is closed today. Skipping 200SMA.")
-#         send_telegram_message("Market closed today. Skipping 200SMA.")
-#         return "Market closed today."
+# # Function to sell EET if EEM is significantly below its 200-SMA
+# def sell_eet_if_below_200sma(api, symbol):
+#     result = daily_trade_sma(api, symbol)
+#     print(result)
+
+# # Function to buy EFO with all available cash if EFA is above its 200-SMA
+# def buy_efo_if_above_200sma(api, symbol):
+#     result = daily_trade_sma(api, symbol)
+#     print(result)
     
-#     sp_sma_200 = calculate_200sma("^GSPC")
-#     sp_latest_price = get_latest_price("^GSPC")
-
-#     if sp_latest_price < sp_sma_200 * (1 - margin):
-#         positions = api.list_positions()
-#         tqqq_position = next((p for p in positions if p.symbol == "TQQQ"), None)
-
-#         if tqqq_position:
-#             shares_to_sell = float(tqqq_position.qty)
-#             sell_order = api.submit_order(
-#                 symbol="TQQQ",
-#                 qty=shares_to_sell,
-#                 side='sell',
-#                 type='market',
-#                 time_in_force='day'
-#             )
-#             send_telegram_message(f"Sold all {shares_to_sell:.6f} shares of TQQQ because S&P 500 is significantly below 200-SMA.")
-            
-#             # Wait for the sell order to be filled
-#             investable_funds = wait_for_order_fill(api, sell_order.id)
-
-#             # Buy BIL with all available cash
-#             account = api.get_account()
-#             available_cash = float(account.cash)
-#             bil_price = api.get_latest_trade("BIL").price
-#             bil_shares_to_buy = available_cash / bil_price
-
-#             if bil_shares_to_buy > 0:
-#                 buy_order = api.submit_order(
-#                     symbol="BIL",
-#                     qty=bil_shares_to_buy,
-#                     side='buy',
-#                     type='market',
-#                     time_in_force='day'
-#                 )
-#                 send_telegram_message(f"Bought {bil_shares_to_buy:.6f} shares of BIL with available cash after selling TQQQ.")
-#                 return f"Sold {shares_to_sell:.6f} shares of TQQQ and bought {bil_shares_to_buy:.6f} shares of BIL."
-#             else:
-#                 send_telegram_message("Not enough cash to buy BIL shares.")
-#                 return "Not enough cash to buy BIL shares."
-#         else:
-#             send_telegram_message("No TQQQ position to sell.")
-#             return "No TQQQ position to sell."
-#     else:
-#         send_telegram_message("S&P 500 is not significantly below 200-SMA. No TQQQ shares sold.")
-#         return "S&P 500 is not significantly below 200-SMA. No TQQQ shares sold."
-
-
-# def buy_tqqq_if_above_200sma(api):
-    
-#     if not check_trading_day(mode="daily"):
-#         print("Market is closed today. Skipping 200SMA.")
-#         send_telegram_message("Market closed today. Skipping 200SMA.")
-#         return "Market closed today."
-    
-#     sp_sma_200 = calculate_200sma("^GSPC")
-#     sp_latest_price = get_latest_price("^GSPC")
-
-#     positions = {p.symbol: float(p.qty) for p in api.list_positions()}
-#     bil_position = positions.get("BIL", 0)
-
-#     if sp_latest_price > sp_sma_200:
-#         account = api.get_account()
-#         available_cash = float(account.cash)
-#         tqqq_price = api.get_latest_trade("TQQQ").price
-
-#         # If there's a BIL position, sell it first
-#         if bil_position > 0:
-#             sell_order = api.submit_order(
-#                 symbol="BIL",
-#                 qty=bil_position,
-#                 side='sell',
-#                 type='market',
-#                 time_in_force='day'
-#             )
-#             send_telegram_message(f"Sold all {bil_position:.6f} shares of BIL to buy TQQQ.")
-            
-#             # Wait for the sell order to be filled
-#             investable_funds = wait_for_order_fill(api, sell_order.id)
-
-#             # Update the available cash after selling BIL
-#             account = api.get_account()
-#             available_cash = float(account.cash)
-
-#         shares_to_buy = available_cash / tqqq_price
-        
-#         if shares_to_buy > 0 and available_cash > 400:  # Make sure enough cash is available from sales or budget
-#             buy_order = api.submit_order(
-#                 symbol="TQQQ",
-#                 qty=shares_to_buy,
-#                 side='buy',
-#                 type='market',
-#                 time_in_force='day'
-#             )
-#             send_telegram_message(f"Bought {shares_to_buy:.6f} shares of TQQQ with available cash.")
-#             return f"Bought {shares_to_buy:.6f} shares of TQQQ with available cash."
-#         else:
-#             tqqq_value = positions.get("TQQQ", 0)
-#             send_telegram_message("Not enough cash to buy TQQQ shares.")
-#             send_telegram_message(f"S&P 500 is above 200-SMA. No TQQQ shares bought because of no cash but {tqqq_value} is already invested.")
-#             return f"S&P 500 is above 200-SMA. No TQQQ shares bought because of no cash but {tqqq_value} is already invested."
-#     else:
-#         bil_value = positions.get("BIL", 0)
-#         send_telegram_message(f"S&P 500 is below 200-SMA. No TQQQ shares bought but {bil_value} is invested in BIL")
-#         return "S&P 500 is below 200-SMA. No TQQQ shares bought."
-
+# # Function to sell EFO if EFA is significantly below its 200-SMA
+# def sell_efo_if_below_200sma(api, symbol):
+#     result = daily_trade_sma(api, symbol)
+#     print(result)
 
 # Function to send a message via Telegram
 def send_telegram_message(message):
@@ -641,6 +482,7 @@ def get_index_data(index_symbol):
     current_price = data['Close'].iloc[-1].item()
     
     return current_price, all_time_high
+
 
 def check_index_drop(request):
     """Cloud Function that checks if an index has dropped 30% below its all-time high."""
@@ -710,17 +552,44 @@ def rebalance_hfea(request):
 @app.route('/monthly_buy_spxl', methods=['POST'])
 def monthly_buy_spxl(request):
     api = set_alpaca_environment(env=alpaca_environment)  # or 'paper' based on your needs
-    return make_monthly_buy_spxl(api)
+    result = monthly_buying_sma(api,"SPXL")
+    print(result)
+    return 200
 
-@app.route('/sell_spxl_below_200sma', methods=['POST'])
-def sell_spxl_below_200sma(request):
+@app.route('/monthly_buy_eet', methods=['POST'])
+def monthly_buy_eet(request):
     api = set_alpaca_environment(env=alpaca_environment)  # or 'paper' based on your needs
-    return sell_spxl_if_below_200sma(api)
+    result = monthly_buying_sma(api,"EET")
+    print(result)
+    return 200
 
-@app.route('/buy_spxl_above_200sma', methods=['POST'])
-def buy_spxl_above_200sma(request):
+@app.route('/monthly_buy_efo', methods=['POST'])
+def monthly_buy_efo(request):
     api = set_alpaca_environment(env=alpaca_environment)  # or 'paper' based on your needs
-    return buy_spxl_if_above_200sma(api)
+    result = monthly_buying_sma(api,"EFO")
+    print(result)
+    return 200
+
+@app.route('/daily_trade_spxl_200sma', methods=['POST'])
+def daily_trade_spxl_200sma(request):
+    api = set_alpaca_environment(env=alpaca_environment)  # or 'paper' based on your needs
+    result = daily_trade_sma(api, "SPXL")
+    print(result)
+    return 200
+
+@app.route('/daily_trade_eet_200sma', methods=['POST'])
+def daily_trade_eet_200sma(request):
+    api = set_alpaca_environment(env=alpaca_environment)  # or 'paper' based on your needs
+    result = daily_trade_sma(api, "EET")
+    print(result)
+    return 200
+
+@app.route('/daily_trade_efo_200sma', methods=['POST'])
+def daily_trade_efo_200sma(request):
+    api = set_alpaca_environment(env=alpaca_environment)  # or 'paper' based on your needs
+    result = daily_trade_sma(api, "EFO")
+    print(result)
+    return 200
 
 @app.route('/index_alert', methods=['POST'])
 def index_alert(request):
@@ -749,11 +618,23 @@ def run_local(action, env='paper', request='test'):
     elif action == 'rebalance_hfea':
         return rebalance_portfolio(api)
     elif action == 'monthly_buy_spxl':
-        return make_monthly_buy_spxl(api)
+        return monthly_buying_sma(api, "SPXL")
     elif action == 'sell_spxl_below_200sma':
-        return sell_spxl_if_below_200sma(api)
+        return daily_trade_sma(api, "SPXL")
     elif action == 'buy_spxl_above_200sma':
-        return buy_spxl_if_above_200sma(api)
+        return daily_trade_sma(api, "SPXL")
+    elif action == 'monthly_buy_eet':
+        return monthly_buying_sma(api, "EET")
+    elif action == 'sell_eet_below_200sma':
+        return daily_trade_sma(api, "EET")
+    elif action == 'buy_eet_above_200sma':
+        return daily_trade_sma(api, "EET")
+    elif action == 'monthly_buy_efo':
+        return monthly_buying_sma(api, "EFO")
+    elif action == 'sell_efo_below_200sma':
+        return daily_trade_sma(api, "EFO")
+    elif action == 'buy_efo_above_200sma':
+        return daily_trade_sma(api, "EFO")
     # elif action == 'monthly_buy_tqqq':
     #     return make_monthly_buy_tqqq(api)
     # elif action == 'sell_tqqq_below_200sma':
@@ -771,7 +652,9 @@ if __name__ == '__main__':
     import argparse
     
     parser = argparse.ArgumentParser()
-    parser.add_argument('--action', choices=['monthly_buy_hfea', 'rebalance_hfea', 'monthly_buy_spxl','sell_spxl_below_200sma','buy_spxl_above_200sma','index_alert', 'sell_tqqq_below_200sma', 'buy_tqqq_above_200sma', 'monthly_buy_tqqq'], required=True, help="Action to perform: 'monthly_buy_hfea', 'rebalance_hfea', 'monthly_buy_spxl','sell_spxl_below_200sma','buy_spxl_above_200sma','sell_tqqq_below_200sma', 'buy_tqqq_above_200sma', 'monthly_buy_tqqq','index_alert'")
+    parser.add_argument('--action', choices=['monthly_buy_hfea', 'rebalance_hfea', 'monthly_buy_spxl','sell_spxl_below_200sma','buy_spxl_above_200sma','index_alert', 'sell_tqqq_below_200sma', 'buy_tqqq_above_200sma', 'monthly_buy_tqqq', 'monthly_buy_eet','sell_eet_below_200sma','buy_eet_above_200sma', 'monthly_buy_efo','sell_efo_below_200sma','buy_efo_above_200sma'], 
+                        required=True, 
+                        help="Action to perform: 'monthly_buy_hfea', 'rebalance_hfea', 'monthly_buy_spxl','sell_spxl_below_200sma','buy_spxl_above_200sma','sell_tqqq_below_200sma', 'buy_tqqq_above_200sma', 'monthly_buy_tqqq','index_alert'")
     parser.add_argument('--env', choices=['live', 'paper'], default='paper', help="Alpaca environment: 'live' or 'paper'")
     parser.add_argument('--use_secret_manager', action='store_true', help="Use Google Secret Manager for API keys")
     args = parser.parse_args()
@@ -788,6 +671,8 @@ if __name__ == '__main__':
     #python3 main.py --action monthly_buy_tqqq --env paper
     #python3 main.py --action sell_tqqq_below_200sma --env paper
     #python3 main.py --action buy_tqqq_above_200sma --env paper
+    #python3 main.py --action buy_eet_above_200sma --env paper
+    #python3 main.py --action sell_eet_below_200sma --env paper
 
 
 #consider shifting to short term bonds when 200sma is below https://app.alpaca.markets/trade/BIL?asset_class=stocks
