@@ -9,6 +9,7 @@ import json
 import time
 import pandas_market_calendars as mcal
 import datetime
+from google.cloud import firestore
 
 
 app = Flask(__name__)
@@ -37,6 +38,9 @@ kmlm_allocation = 0.3
 
 alpaca_environment = 'live'
 margin=0.01 #band around the 200sma to avoid too many trades
+
+# Initialize Firestore client
+db = firestore.Client() 
 
 def is_running_in_cloud():
     return (
@@ -95,7 +99,25 @@ def get_telegram_secrets():
         chat_id = os.getenv("TELEGRAM_CHAT_ID")
         
     return telegram_key, chat_id
-        
+
+
+def save_balance(strategy, invested):
+    doc_ref = db.collection("strategy-balances").document(strategy)
+    doc_ref.set({
+        "invested": invested,
+    })
+
+def load_balances():
+    balances = {}
+    docs = db.collection("strategy-balances").stream()
+    for doc in docs:
+        balances[doc.id] = doc.to_dict()
+    return balances
+
+def update_balance_field(strategy, value):
+    doc_ref = db.collection("strategy-balances").document(strategy)
+    doc_ref.update({"invested": value})
+
 def make_monthly_buys(api):
     investment_amount = hfea_investment_amount
 
@@ -327,13 +349,18 @@ def monthly_buying_sma(api,symbol):
         shares_to_buy = investment_amount / price
         
         if shares_to_buy > 0:
-            api.submit_order(
+            order = api.submit_order(
                 symbol=symbol,
                 qty=shares_to_buy,
                 side='buy',
                 type='market',
                 time_in_force='day'
             )
+            wait_for_order_fill(api, order.id) 
+            positions = api.list_positions()
+            position = next((p for p in positions if p.symbol == symbol), None) 
+            invested = float(position.market_value)
+            save_balance(symbol + "_SMA", invested)
             send_telegram_message(f"Bought {shares_to_buy:.6f} shares of {symbol}.")
             return f"Bought {shares_to_buy:.6f} shares of {symbol}."
         else:
@@ -376,10 +403,13 @@ def daily_trade_sma(api,symbol):
             
             # Wait for the sell order to be filled
             wait_for_order_fill(api, sell_order.id)  
+            invested = float(position.market_value)
+            save_balance(symbol + "_SMA", invested)
         else:
             send_telegram_message(f"Index is significantly below 200-SMA and no {symbol} position to sell.")
             return f"Index is significantly below 200-SMA and no {symbol} position to sell."
     elif latest_price > sma_200 * (1 + margin):
+        #adjustment to read balance needed here
         account = api.get_account()
         available_cash = float(account.cash)        
         
@@ -394,10 +424,17 @@ def daily_trade_sma(api,symbol):
                 type='market',
                 time_in_force='day'
             )
+            wait_for_order_fill(api, buy_order.id)
+            positions = api.list_positions()
+            position = next((p for p in positions if p.symbol == symbol), None)
+            invested = float(position.market_value)
+            save_balance(symbol + "_SMA", invested)
             send_telegram_message(f"Bought {shares_to_buy:.6f} shares of {symbol} with available cash")
             return f"Bought {shares_to_buy:.6f} shares of {symbol} with available cash."
         else:
             position_value = positions.get(symbol, 0)
+            invested = float(position.market_value)
+            save_balance(symbol + "_SMA", invested)
             send_telegram_message(f"Index is above 200-SMA. No {symbol} shares bought because of no cash but {position_value} is already invested")
             return f"Index is above 200-SMA. No {symbol} shares bought because of no cash but {position_value} is already invested"
     else:
@@ -661,6 +698,9 @@ if __name__ == '__main__':
 
     # Run the function locally
     result = run_local(action=args.action, env=args.env)
+    # save_balance("SPXL_SMA", 100)
+    # save_balance("EET_SMA", 100)
+    # save_balance("EFO_SMA", 100)
 
 #local execution:
     #python3 main.py --action monthly_buy_hfea --env paper
