@@ -12,7 +12,7 @@ steps:
     - --timeout=540s
     - --entry-point=monthly_buy_hfea  # Entry point function in your Python code
     - --memory=512MB
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   #Step 2: Deploy the rebalance_hfeaFunction
@@ -28,7 +28,7 @@ steps:
     - --timeout=540s
     - --entry-point=rebalance_hfea  # Entry point function in your Python code
     - --memory=512MB
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # Step 3: Deploy the monthly_buy_spxl
@@ -44,7 +44,7 @@ steps:
     - --timeout=540s
     - --entry-point=monthly_buy_spxl  # Entry point function in your Python code
     - --memory=512MB
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # Deploy the monthly_buy_eet
@@ -60,7 +60,7 @@ steps:
     - --timeout=540s
     - --entry-point=monthly_buy_eet  # Entry point function in your Python code
     - --memory=512MB
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # Deploy the monthly_buy_efo
@@ -76,7 +76,7 @@ steps:
     - --timeout=540s
     - --entry-point=monthly_buy_efo  # Entry point function in your Python code
     - --memory=512MB
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # Step 4: Deploy the daily_trade_spxl_200sma
@@ -92,7 +92,7 @@ steps:
     - --timeout=540s
     - --entry-point=daily_trade_spxl_200sma  # Entry point function in your Python code
     - --memory=512MB
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # Step 4: Deploy the daily_trade_eet_200sma
@@ -108,7 +108,7 @@ steps:
     - --timeout=540s
     - --entry-point=daily_trade_eet_200sma  # Entry point function in your Python code
     - --memory=512MB
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # Step 4: Deploy the daily_trade_efo_200sma
@@ -124,7 +124,7 @@ steps:
     - --timeout=540s
     - --entry-point=daily_trade_efo_200sma  # Entry point function in your Python code
     - --memory=512MB
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # Step 6: Deploy the unified index_alert Cloud Function with Alpaca and Telegram settings
@@ -140,7 +140,7 @@ steps:
     - --timeout=540s
     - --entry-point=index_alert  # Python function entry point
     - --memory=512MB
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
 # Create Cloud Scheduler job for 'monthly_buy_hfea' function

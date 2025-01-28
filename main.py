@@ -43,8 +43,8 @@ alpaca_environment = "live"
 margin = 0.01  # band around the 200sma to avoid too many trades
 
 # Initialize Firestore client
-project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
-db = firestore.Client(project=project_id, client_options={"api_endpoint": "https://eur3-firestore.googleapis.com"})
+project_id = os.getenv("GOOGLE_CLOUD_PROJECT_ID")
+db = firestore.Client(project=project_id)
 
 def is_running_in_cloud():
     return (
