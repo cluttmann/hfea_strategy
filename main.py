@@ -553,13 +553,12 @@ def daily_trade_sma(api, symbol):
             )
             return f"Bought {shares_to_buy:.6f} shares of {symbol} with available cash."
         else:
-            position_value = position.get(symbol, 0)
             invested = float(position.market_value)
             save_balance(symbol + "_SMA", invested)
             send_telegram_message(
-                f"Index is above 200-SMA. No {symbol} shares bought because of no cash but {position_value} is already invested"
+                f"Index is above 200-SMA. No {symbol} shares bought because of no cash but {invested} is already invested"
             )
-            return f"Index is above 200-SMA. No {symbol} shares bought because of no cash but {position_value} is already invested"
+            return f"Index is above 200-SMA. No {symbol} shares bought because of no cash but {invested} is already invested"
     else:
         positions = api.list_positions()
         position = next((p for p in positions if p.symbol == symbol), None)
