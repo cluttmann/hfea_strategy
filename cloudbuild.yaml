@@ -11,7 +11,7 @@ steps:
     - --runtime=python310
     - --timeout=540s
     - --entry-point=monthly_buy_hfea  # Entry point function in your Python code
-    - --memory=256MB
+    - --memory=512MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
@@ -27,7 +27,7 @@ steps:
     - --runtime=python310
     - --timeout=540s
     - --entry-point=rebalance_hfea  # Entry point function in your Python code
-    - --memory=256MB
+    - --memory=512MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
@@ -43,7 +43,7 @@ steps:
     - --runtime=python310
     - --timeout=540s
     - --entry-point=monthly_buy_spxl  # Entry point function in your Python code
-    - --memory=256MB
+    - --memory=512MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
@@ -59,7 +59,7 @@ steps:
     - --runtime=python310
     - --timeout=540s
     - --entry-point=monthly_buy_eet  # Entry point function in your Python code
-    - --memory=256MB
+    - --memory=512MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
@@ -75,7 +75,7 @@ steps:
     - --runtime=python310
     - --timeout=540s
     - --entry-point=monthly_buy_efo  # Entry point function in your Python code
-    - --memory=256MB
+    - --memory=512MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
@@ -91,7 +91,7 @@ steps:
     - --runtime=python310
     - --timeout=540s
     - --entry-point=daily_trade_spxl_200sma  # Entry point function in your Python code
-    - --memory=256MB
+    - --memory=512MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
@@ -107,7 +107,7 @@ steps:
     - --runtime=python310
     - --timeout=540s
     - --entry-point=daily_trade_eet_200sma  # Entry point function in your Python code
-    - --memory=256MB
+    - --memory=512MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
@@ -123,7 +123,7 @@ steps:
     - --runtime=python310
     - --timeout=540s
     - --entry-point=daily_trade_efo_200sma  # Entry point function in your Python code
-    - --memory=256MB
+    - --memory=512MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
@@ -139,56 +139,9 @@ steps:
     - --runtime=python310
     - --timeout=540s
     - --entry-point=index_alert  # Python function entry point
-    - --memory=256MB
+    - --memory=512MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
-
-  # # Step 7: Deploy the make_monthly_buy_tqqq
-  # - name: 'gcr.io/cloud-builders/gcloud'
-  #   args:
-  #   - functions
-  #   - deploy
-  #   - make_monthly_buy_tqqq  # The name of the Cloud Function for make_monthly_buy_tqqq
-  #   - --source=.
-  #   - --trigger-http
-  #   - --region=europe-west3
-  #   - --runtime=python310
-  #   - --timeout=540s
-  #   - --entry-point=monthly_buy_tqqq  # Entry point function in your Python code
-  #   - --memory=256MB
-  #   - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
-
-  # # Step 4: Deploy the buy_tqqq_if_above_200sma
-  # - name: 'gcr.io/cloud-builders/gcloud'
-  #   args:
-  #   - functions
-  #   - deploy
-  #   - buy_tqqq_if_above_200sma  # The name of the Cloud Function for buy_tqqq_if_above_200sma
-  #   - --source=.
-  #   - --trigger-http
-  #   - --region=europe-west3
-  #   - --runtime=python310
-  #   - --timeout=540s
-  #   - --entry-point=buy_tqqq_above_200sma  # Entry point function in your Python code
-  #   - --memory=256MB
-  #   - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
-
-
-  # # Step 5: Deploy the sell_tqqq_if_below_200sma
-  # - name: 'gcr.io/cloud-builders/gcloud'
-  #   args:
-  #   - functions
-  #   - deploy
-  #   - sell_tqqq_if_below_200sma  # The name of the Cloud Function for sell_tqqq_if_below_200sma
-  #   - --source=.
-  #   - --trigger-http
-  #   - --region=europe-west3
-  #   - --runtime=python310
-  #   - --timeout=540s
-  #   - --entry-point=sell_tqqq_below_200sma  # Entry point function in your Python code
-  #   - --memory=256MB
-  #   - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782
-
 
 # Create Cloud Scheduler job for 'monthly_buy_hfea' function
   - name: 'gcr.io/cloud-builders/gcloud'
