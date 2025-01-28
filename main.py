@@ -44,8 +44,7 @@ margin = 0.01  # band around the 200sma to avoid too many trades
 
 # Initialize Firestore client
 project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
-db = firestore.Client(project=project_id)
-
+db = firestore.Client(project=project_id, client_options={"api_endpoint": "https://eur3-firestore.googleapis.com"})
 
 def is_running_in_cloud():
     return (
@@ -531,7 +530,7 @@ def daily_trade_sma(api, symbol):
         # adjustment to read balance needed here
         account = api.get_account()
         available_cash = float(account.cash)
-        invested_amount = load_balances().get("EFO_SMA", {}).get("invested", None)
+        invested_amount = load_balances().get(f"{symbol}_SMA", {}).get("invested", None)
         positions = api.list_positions()
         position = next((p for p in positions if p.symbol == symbol), None)
         if not position and available_cash > invested_amount:
