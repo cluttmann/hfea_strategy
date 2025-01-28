@@ -553,7 +553,7 @@ def daily_trade_sma(api, symbol):
             )
             return f"Bought {shares_to_buy:.6f} shares of {symbol} with available cash."
         else:
-            position_value = positions.get(symbol, 0)
+            position_value = position.get(symbol, 0)
             invested = float(position.market_value)
             save_balance(symbol + "_SMA", invested)
             send_telegram_message(
