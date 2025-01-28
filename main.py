@@ -43,7 +43,8 @@ alpaca_environment = "live"
 margin = 0.01  # band around the 200sma to avoid too many trades
 
 # Initialize Firestore client
-db = firestore.Client()
+project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
+db = firestore.Client(project=project_id)
 
 
 def is_running_in_cloud():
@@ -561,6 +562,9 @@ def daily_trade_sma(api, symbol):
             )
             return f"Index is above 200-SMA. No {symbol} shares bought because of no cash but {position_value} is already invested"
     else:
+        positions = api.list_positions()
+        position = next((p for p in positions if p.symbol == symbol), None)
+        invested = float(position.market_value)
         save_balance(symbol + "_SMA", invested)
         send_telegram_message(
             f"Index is not significantly below or above 200-SMA. No {symbol} shares sold or bought"
