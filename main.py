@@ -14,7 +14,7 @@ from google.cloud import firestore
 
 app = Flask(__name__)
 
-monthly_invest = 400
+monthly_invest = 5
 
 # Strategy would be to allocate 40% to the SPXL, 10% to the EET, 10% to the EFO SMA 200 Strategy and 40% to HFEA
 strategy_allocations = {
@@ -562,8 +562,9 @@ def daily_trade_sma(api, symbol):
     else:
         positions = api.list_positions()
         position = next((p for p in positions if p.symbol == symbol), None)
-        invested = float(position.market_value)
-        save_balance(symbol + "_SMA", invested)
+        if position:
+            invested = float(position.market_value)
+            save_balance(symbol + "_SMA", invested)
         send_telegram_message(
             f"Index is not significantly below or above 200-SMA. No {symbol} shares sold or bought"
         )
