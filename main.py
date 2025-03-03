@@ -14,7 +14,7 @@ from google.cloud import firestore
 
 app = Flask(__name__)
 
-monthly_invest = 200
+monthly_invest = 400
 
 # Strategy would be to allocate 40% to the SPXL, 10% to the EET, 10% to the EFO SMA 200 Strategy and 40% to HFEA
 strategy_allocations = {

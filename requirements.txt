@@ -3,7 +3,7 @@ alpaca-trade-api==2.3.0
 Flask==2.3.2  # For handling HTTP requests in Cloud Functions
 google-cloud-secret-manager==2.7.2
 python-dotenv==1.0.0
-yfinance==0.2.46
+yfinance
 requests
 pandas-market-calendars
 google-cloud-firestore
