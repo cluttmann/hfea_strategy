@@ -478,10 +478,13 @@ def monthly_buying_sma(api, symbol):
             send_telegram_message(f"Amount too small to buy {symbol} shares.")
             return f"Amount too small to buy {symbol} shares."
     else:
+        invested_amount = load_balances().get(f"{symbol}_SMA", {}).get("invested", None)
+        updated_balance = investment_amount + invested_amount
+        save_balance(symbol + "_SMA", updated_balance)
         send_telegram_message(
-            f"Index is significantly below 200-SMA and no monthly invest was done into {symbol}"
+            f"Index is significantly below 200-SMA and no monthly invest was done into {symbol} but {updated_balance} of the cash is allocated to to this strategy"
         )
-        return f"Index is significantly below 200-SMA and no monthly invest was done into {symbol}"
+        return f"Index is significantly below 200-SMA and no monthly invest was done into {symbol} but {updated_balance} of the cash is allocated to to this strategy"
 
 
 def daily_trade_sma(api, symbol):
