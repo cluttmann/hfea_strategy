@@ -47,22 +47,6 @@ steps:
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
-  # Deploy the monthly_buy_eet
-  - name: 'gcr.io/cloud-builders/gcloud'
-    args:
-    - functions
-    - deploy
-    - monthly_buy_eet  # The name of the Cloud Function
-    - --source=.
-    - --trigger-http
-    - --region=europe-west3
-    - --runtime=python310
-    - --timeout=540s
-    - --entry-point=monthly_buy_eet  # Entry point function in your Python code
-    - --memory=512MB
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
-    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
-
   # Deploy the monthly_buy_efo
   - name: 'gcr.io/cloud-builders/gcloud'
     args:
@@ -91,22 +75,6 @@ steps:
     - --runtime=python310
     - --timeout=540s
     - --entry-point=daily_trade_spxl_200sma  # Entry point function in your Python code
-    - --memory=512MB
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
-    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
-
-  # Step 4: Deploy the daily_trade_eet_200sma
-  - name: 'gcr.io/cloud-builders/gcloud'
-    args:
-    - functions
-    - deploy
-    - daily_trade_eet_200sma  # The name of the Cloud Function for rebalancing
-    - --source=.
-    - --trigger-http
-    - --region=europe-west3
-    - --runtime=python310
-    - --timeout=540s
-    - --entry-point=daily_trade_eet_200sma  # Entry point function in your Python code
     - --memory=512MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
@@ -196,19 +164,6 @@ steps:
     ]
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
-  # Create Cloud Scheduler job for 'daily_trade_eet_200sma' function
-  - name: 'gcr.io/cloud-builders/gcloud'
-    args: [
-      'scheduler', 'jobs', 'update', 'http', 'daily_trade_eet_200sma',
-      '--schedule', '56 15 * * 1-5',  
-      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/daily_trade_eet_200sma',
-      '--http-method', 'POST',
-      '--time-zone', 'America/New_York',
-      '--location', 'europe-west3',
-      '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
-    ]
-    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
-
   # Create Cloud Scheduler job for 'daily_trade_efo_200sma' function
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
@@ -254,19 +209,6 @@ steps:
       'scheduler', 'jobs', 'update', 'http', 'monthly_buy_efo',
       '--schedule', '0 12 1-7 * *',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/monthly_buy_efo',
-      '--http-method', 'POST',
-      '--time-zone', 'America/New_York',
-      '--location', 'europe-west3',
-      '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
-    ]
-    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
-
-  # Create Cloud Scheduler job for 'monthly_buy_eet' function
-  - name: 'gcr.io/cloud-builders/gcloud'
-    args: [
-      'scheduler', 'jobs', 'update', 'http', 'monthly_buy_eet',
-      '--schedule', '0 12 1-7 * *',  
-      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/monthly_buy_eet',
       '--http-method', 'POST',
       '--time-zone', 'America/New_York',
       '--location', 'europe-west3',

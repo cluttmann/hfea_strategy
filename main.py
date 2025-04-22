@@ -18,9 +18,8 @@ monthly_invest = 400
 
 # Strategy would be to allocate 40% to the SPXL, 10% to the EET, 10% to the EFO SMA 200 Strategy and 40% to HFEA
 strategy_allocations = {
-    "hfea_allo": 0.4,
+    "hfea_allo": 0.5,
     "spxl_allo": 0.4,
-    "eet_allo": 0.1,
     "efo_allo": 0.1,
 }
 
