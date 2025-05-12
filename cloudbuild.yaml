@@ -189,6 +189,7 @@ steps:
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
       '--message-body', '{"index_symbol": "^SPX", "index_name": "S&P 500"}'
     ]
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # Cloud Scheduler Job for MSCI World Index (POST method with request body)
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -202,6 +203,7 @@ steps:
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
       '--message-body', '{"index_symbol": "URTH", "index_name": "MSCI World"}'
     ]
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
 # # Create Cloud Scheduler job for 'monthly_buy_efo' function
 #   - name: 'gcr.io/cloud-builders/gcloud'

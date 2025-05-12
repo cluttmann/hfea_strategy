@@ -1,45 +1,3 @@
-def get_auth_headers(api):
-    return {
-        "APCA-API-KEY-ID": api["API_KEY"],
-        "APCA-API-SECRET-KEY": api["SECRET_KEY"],
-    }
-
-def get_latest_trade(api, symbol):
-    url = f"{api['BASE_URL']}/v2/stocks/{symbol}/trades/latest"
-    response = requests.get(url, headers=get_auth_headers(api))
-    response.raise_for_status()
-    return response.json()["trade"]["p"]
-
-def get_account_cash(api):
-    url = f"{api['BASE_URL']}/v2/account"
-    response = requests.get(url, headers=get_auth_headers(api))
-    response.raise_for_status()
-    return float(response.json()["cash"])
-
-def list_positions(api):
-    url = f"{api['BASE_URL']}/v2/positions"
-    response = requests.get(url, headers=get_auth_headers(api))
-    response.raise_for_status()
-    return response.json()
-
-def get_order(api, order_id):
-    url = f"{api['BASE_URL']}/v2/orders/{order_id}"
-    response = requests.get(url, headers=get_auth_headers(api))
-    response.raise_for_status()
-    return response.json()
-
-def submit_order(api, symbol, qty, side):
-    url = f"{api['BASE_URL']}/v2/orders"
-    data = {
-        "symbol": symbol,
-        "qty": round(qty, 6),
-        "side": side,
-        "type": "market",
-        "time_in_force": "day",
-    }
-    response = requests.post(url, headers=get_auth_headers(api), json=data)
-    response.raise_for_status()
-    return response.json()
 import os
 from flask import Flask, jsonify
 from google.cloud import secretmanager
@@ -85,6 +43,59 @@ margin = 0.01  # band around the 200sma to avoid too many trades
 # Initialize Firestore client
 project_id = os.getenv("GOOGLE_CLOUD_PROJECT_ID")
 db = firestore.Client(project=project_id)
+
+def get_auth_headers(api):
+    return {
+        "APCA-API-KEY-ID": api["API_KEY"],
+        "APCA-API-SECRET-KEY": api["SECRET_KEY"],
+    }
+
+def get_latest_trade(api, symbol):
+    symbol = symbol.upper()
+    market_data_base_url = "https://data.alpaca.markets"
+    url = f"{market_data_base_url}/v2/stocks/{symbol}/trades/latest"
+    try:
+        response = requests.get(url, headers=get_auth_headers(api))
+        response.raise_for_status()
+        return response.json()["trade"]["p"]
+    except requests.exceptions.HTTPError as e:
+        if response.status_code == 404:
+            print(f"Alpaca data not available for {symbol}, falling back to yfinance.")
+            price = yf.Ticker(symbol).history(period="1d")["Close"].iloc[-1]
+            return round(price, 2)
+        else:
+            raise
+
+def get_account_cash(api):
+    url = f"{api['BASE_URL']}/v2/account"
+    response = requests.get(url, headers=get_auth_headers(api))
+    response.raise_for_status()
+    return float(response.json()["cash"])
+
+def list_positions(api):
+    url = f"{api['BASE_URL']}/v2/positions"
+    response = requests.get(url, headers=get_auth_headers(api))
+    response.raise_for_status()
+    return response.json()
+
+def get_order(api, order_id):
+    url = f"{api['BASE_URL']}/v2/orders/{order_id}"
+    response = requests.get(url, headers=get_auth_headers(api))
+    response.raise_for_status()
+    return response.json()
+
+def submit_order(api, symbol, qty, side):
+    url = f"{api['BASE_URL']}/v2/orders"
+    data = {
+        "symbol": symbol,
+        "qty": round(qty, 6),
+        "side": side,
+        "type": "market",
+        "time_in_force": "day",
+    }
+    response = requests.post(url, headers=get_auth_headers(api), json=data)
+    response.raise_for_status()
+    return response.json()
 
 def is_running_in_cloud():
     return (
