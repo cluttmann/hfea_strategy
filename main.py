@@ -1,8 +1,49 @@
+def get_auth_headers(api):
+    return {
+        "APCA-API-KEY-ID": api["API_KEY"],
+        "APCA-API-SECRET-KEY": api["SECRET_KEY"],
+    }
+
+def get_latest_trade(api, symbol):
+    url = f"{api['BASE_URL']}/v2/stocks/{symbol}/trades/latest"
+    response = requests.get(url, headers=get_auth_headers(api))
+    response.raise_for_status()
+    return response.json()["trade"]["p"]
+
+def get_account_cash(api):
+    url = f"{api['BASE_URL']}/v2/account"
+    response = requests.get(url, headers=get_auth_headers(api))
+    response.raise_for_status()
+    return float(response.json()["cash"])
+
+def list_positions(api):
+    url = f"{api['BASE_URL']}/v2/positions"
+    response = requests.get(url, headers=get_auth_headers(api))
+    response.raise_for_status()
+    return response.json()
+
+def get_order(api, order_id):
+    url = f"{api['BASE_URL']}/v2/orders/{order_id}"
+    response = requests.get(url, headers=get_auth_headers(api))
+    response.raise_for_status()
+    return response.json()
+
+def submit_order(api, symbol, qty, side):
+    url = f"{api['BASE_URL']}/v2/orders"
+    data = {
+        "symbol": symbol,
+        "qty": round(qty, 6),
+        "side": side,
+        "type": "market",
+        "time_in_force": "day",
+    }
+    response = requests.post(url, headers=get_auth_headers(api), json=data)
+    response.raise_for_status()
+    return response.json()
 import os
 from flask import Flask, jsonify
 from google.cloud import secretmanager
 from dotenv import load_dotenv
-import alpaca_trade_api as tradeapi
 import yfinance as yf
 import requests
 import json
@@ -91,8 +132,8 @@ def set_alpaca_environment(env, use_secret_manager=True):
             SECRET_KEY = os.getenv("ALPACA_SECRET_KEY_PAPER")
             BASE_URL = "https://paper-api.alpaca.markets"
 
-    # Initialize Alpaca API
-    return tradeapi.REST(API_KEY, SECRET_KEY, BASE_URL, api_version="v2")
+    # Return credentials dictionary instead of Alpaca API object
+    return {"API_KEY": API_KEY, "SECRET_KEY": SECRET_KEY, "BASE_URL": BASE_URL}
 
 
 def get_telegram_secrets():
@@ -170,9 +211,9 @@ def make_monthly_buys(api):
         kmlm_amount = (kmlm_underweight / total_underweight) * investment_amount
 
     # Get current prices for UPRO, TMF, and KMLM
-    upro_price = float(api.get_latest_trade("UPRO").price)
-    tmf_price = float(api.get_latest_trade("TMF").price)
-    kmlm_price = float(api.get_latest_trade("KMLM").price)
+    upro_price = float(get_latest_trade(api, "UPRO"))
+    tmf_price = float(get_latest_trade(api, "TMF"))
+    kmlm_price = float(get_latest_trade(api, "KMLM"))
 
     # Calculate number of shares to buy
     upro_shares_to_buy = upro_amount / upro_price
@@ -186,9 +227,7 @@ def make_monthly_buys(api):
         ("KMLM", kmlm_shares_to_buy),
     ]:
         if qty > 0:
-            api.submit_order(
-                symbol=symbol, qty=qty, side="buy", type="market", time_in_force="day"
-            )
+            submit_order(api, symbol, qty, "buy")
             print(f"Bought {qty:.6f} shares of {symbol}.")
             send_telegram_message(f"Bought {qty:.6f} shares of {symbol}.")
         else:
@@ -203,25 +242,22 @@ def make_monthly_buys(api):
 
 
 def get_hfea_allocations(api):
-    positions = {p.symbol: float(p.market_value) for p in api.list_positions()}
+    positions = {p["symbol"]: float(p["market_value"]) for p in list_positions(api)}
     upro_value = positions.get("UPRO", 0)
     tmf_value = positions.get("TMF", 0)
     kmlm_value = positions.get("KMLM", 0)
     total_value = upro_value + tmf_value + kmlm_value
-
     # Calculate current and target allocations
-    current_upro_percent = upro_value / total_value
-    current_tmf_percent = tmf_value / total_value
-    current_kmlm_percent = kmlm_value / total_value
+    current_upro_percent = upro_value / total_value if total_value else 0
+    current_tmf_percent = tmf_value / total_value if total_value else 0
+    current_kmlm_percent = kmlm_value / total_value if total_value else 0
     target_upro_value = total_value * upro_allocation
     target_tmf_value = total_value * tmf_allocation
     target_kmlm_value = total_value * kmlm_allocation
-
     # Calculate deviations
     upro_diff = upro_value - target_upro_value
     tmf_diff = tmf_value - target_tmf_value
     kmlm_diff = kmlm_value - target_kmlm_value
-
     return (
         upro_diff,
         tmf_diff,
@@ -275,25 +311,21 @@ def rebalance_portfolio(api):
     # If UPRO is over-allocated, adjust TMF or KMLM if under-allocated
     if upro_diff > 0:
         if tmf_diff < 0:
-            upro_shares_to_sell = min(upro_diff, abs(tmf_diff)) / float(
-                api.get_latest_trade("UPRO").price
-            )
+            upro_shares_to_sell = min(upro_diff, abs(tmf_diff)) / float(get_latest_trade(api, "UPRO"))
             tmf_shares_to_buy = (
                 upro_shares_to_sell
-                * float(api.get_latest_trade("UPRO").price)
-                / float(api.get_latest_trade("TMF").price)
+                * float(get_latest_trade(api, "UPRO"))
+                / float(get_latest_trade(api, "TMF"))
             ) * fee_margin
             rebalance_actions.append(("UPRO", upro_shares_to_sell, "sell"))
             rebalance_actions.append(("TMF", tmf_shares_to_buy, "buy"))
 
         if kmlm_diff < 0:
-            upro_shares_to_sell = min(upro_diff, abs(kmlm_diff)) / float(
-                api.get_latest_trade("UPRO").price
-            )
+            upro_shares_to_sell = min(upro_diff, abs(kmlm_diff)) / float(get_latest_trade(api, "UPRO"))
             kmlm_shares_to_buy = (
                 upro_shares_to_sell
-                * float(api.get_latest_trade("UPRO").price)
-                / float(api.get_latest_trade("KMLM").price)
+                * float(get_latest_trade(api, "UPRO"))
+                / float(get_latest_trade(api, "KMLM"))
             ) * fee_margin
             rebalance_actions.append(("UPRO", upro_shares_to_sell, "sell"))
             rebalance_actions.append(("KMLM", kmlm_shares_to_buy, "buy"))
@@ -301,25 +333,21 @@ def rebalance_portfolio(api):
     # If TMF is over-allocated, adjust UPRO or KMLM if under-allocated
     if tmf_diff > 0:
         if upro_diff < 0:
-            tmf_shares_to_sell = min(tmf_diff, abs(upro_diff)) / float(
-                api.get_latest_trade("TMF").price
-            )
+            tmf_shares_to_sell = min(tmf_diff, abs(upro_diff)) / float(get_latest_trade(api, "TMF"))
             upro_shares_to_buy = (
                 tmf_shares_to_sell
-                * float(api.get_latest_trade("TMF").price)
-                / float(api.get_latest_trade("UPRO").price)
+                * float(get_latest_trade(api, "TMF"))
+                / float(get_latest_trade(api, "UPRO"))
             ) * fee_margin
             rebalance_actions.append(("TMF", tmf_shares_to_sell, "sell"))
             rebalance_actions.append(("UPRO", upro_shares_to_buy, "buy"))
 
         if kmlm_diff < 0:
-            tmf_shares_to_sell = min(tmf_diff, abs(kmlm_diff)) / float(
-                api.get_latest_trade("TMF").price
-            )
+            tmf_shares_to_sell = min(tmf_diff, abs(kmlm_diff)) / float(get_latest_trade(api, "TMF"))
             kmlm_shares_to_buy = (
                 tmf_shares_to_sell
-                * float(api.get_latest_trade("TMF").price)
-                / float(api.get_latest_trade("KMLM").price)
+                * float(get_latest_trade(api, "TMF"))
+                / float(get_latest_trade(api, "KMLM"))
             ) * fee_margin
             rebalance_actions.append(("TMF", tmf_shares_to_sell, "sell"))
             rebalance_actions.append(("KMLM", kmlm_shares_to_buy, "buy"))
@@ -327,25 +355,21 @@ def rebalance_portfolio(api):
     # If KMLM is over-allocated, adjust UPRO or TMF if under-allocated
     if kmlm_diff > 0:
         if upro_diff < 0:
-            kmlm_shares_to_sell = min(kmlm_diff, abs(upro_diff)) / float(
-                api.get_latest_trade("KMLM").price
-            )
+            kmlm_shares_to_sell = min(kmlm_diff, abs(upro_diff)) / float(get_latest_trade(api, "KMLM"))
             upro_shares_to_buy = (
                 kmlm_shares_to_sell
-                * float(api.get_latest_trade("KMLM").price)
-                / float(api.get_latest_trade("UPRO").price)
+                * float(get_latest_trade(api, "KMLM"))
+                / float(get_latest_trade(api, "UPRO"))
             ) * fee_margin
             rebalance_actions.append(("KMLM", kmlm_shares_to_sell, "sell"))
             rebalance_actions.append(("UPRO", upro_shares_to_buy, "buy"))
 
         if tmf_diff < 0:
-            kmlm_shares_to_sell = min(kmlm_diff, abs(tmf_diff)) / float(
-                api.get_latest_trade("KMLM").price
-            )
+            kmlm_shares_to_sell = min(kmlm_diff, abs(tmf_diff)) / float(get_latest_trade(api, "KMLM"))
             tmf_shares_to_buy = (
                 kmlm_shares_to_sell
-                * float(api.get_latest_trade("KMLM").price)
-                / float(api.get_latest_trade("TMF").price)
+                * float(get_latest_trade(api, "KMLM"))
+                / float(get_latest_trade(api, "TMF"))
             ) * fee_margin
             rebalance_actions.append(("KMLM", kmlm_shares_to_sell, "sell"))
             rebalance_actions.append(("TMF", tmf_shares_to_buy, "buy"))
@@ -353,11 +377,9 @@ def rebalance_portfolio(api):
     # Execute rebalancing actions
     for symbol, qty, action in rebalance_actions:
         if qty > 0:
-            order = api.submit_order(
-                symbol=symbol, qty=qty, side=action, type="market", time_in_force="day"
-            )
+            order = submit_order(api, symbol, qty, action)
             action_verb = "Bought" if action == "buy" else "Sold"
-            wait_for_order_fill(api, order.id)
+            wait_for_order_fill(api, order["id"])
             print(f"{action_verb} {qty:.6f} shares of {symbol} to rebalance.")
             send_telegram_message(
                 f"{action_verb} {qty:.6f} shares of {symbol} to rebalance."
@@ -454,22 +476,16 @@ def monthly_buying_sma(api, symbol):
 
     print(investment_amount, latest_price, sma_200)
     if latest_price > sma_200 * (1 + margin):
-        price = api.get_latest_trade(symbol).price
+        price = get_latest_trade(api, symbol)
         print(price)
         shares_to_buy = investment_amount / price
 
         if shares_to_buy > 0:
-            order = api.submit_order(
-                symbol=symbol,
-                qty=shares_to_buy,
-                side="buy",
-                type="market",
-                time_in_force="day",
-            )
-            wait_for_order_fill(api, order.id)
-            positions = api.list_positions()
-            position = next((p for p in positions if p.symbol == symbol), None)
-            invested = float(position.market_value)
+            order = submit_order(api, symbol, shares_to_buy, "buy")
+            wait_for_order_fill(api, order["id"])
+            positions = list_positions(api)
+            position = next((p for p in positions if p["symbol"] == symbol), None)
+            invested = float(position["market_value"])
             save_balance(symbol + "_SMA", invested)
             send_telegram_message(f"Bought {shares_to_buy:.6f} shares of {symbol}.")
             return f"Bought {shares_to_buy:.6f} shares of {symbol}."
@@ -502,26 +518,19 @@ def daily_trade_sma(api, symbol):
         latest_price = get_latest_price("EFA")
 
     if latest_price < sma_200 * (1 - margin):
-        positions = api.list_positions()
-        position = next((p for p in positions if p.symbol == symbol), None)
+        positions = list_positions(api)
+        position = next((p for p in positions if p["symbol"] == symbol), None)
 
         if position:
-            shares_to_sell = float(position.qty)
-            invested = float(position.market_value)
+            shares_to_sell = float(position["qty"])
+            invested = float(position["market_value"])
             # Sell all SPXL shares
-            sell_order = api.submit_order(
-                symbol=symbol,
-                qty=shares_to_sell,
-                side="sell",
-                type="market",
-                time_in_force="day",
-            )
+            sell_order = submit_order(api, symbol, shares_to_sell, "sell")
             send_telegram_message(
                 f"Sold all {shares_to_sell:.6f} shares of {symbol} because Index is significantly below 200-SMA."
             )
-
             # Wait for the sell order to be filled
-            wait_for_order_fill(api, sell_order.id)
+            wait_for_order_fill(api, sell_order["id"])
             save_balance(symbol + "_SMA", invested)
         else:
             send_telegram_message(
@@ -530,42 +539,35 @@ def daily_trade_sma(api, symbol):
             return f"Index is significantly below 200-SMA and no {symbol} position to sell."
     elif latest_price > sma_200 * (1 + margin):
         # adjustment to read balance needed here
-        account = api.get_account()
-        available_cash = float(account.cash)
+        available_cash = get_account_cash(api)
         invested_amount = load_balances().get(f"{symbol}_SMA", {}).get("invested", None)
-        positions = api.list_positions()
-        position = next((p for p in positions if p.symbol == symbol), None)
+        positions = list_positions(api)
+        position = next((p for p in positions if p["symbol"] == symbol), None)
         if not position and available_cash > invested_amount:
-            price = api.get_latest_trade(symbol).price
+            price = get_latest_trade(api, symbol)
             shares_to_buy = invested_amount / price
-            buy_order = api.submit_order(
-                symbol=symbol,
-                qty=shares_to_buy,
-                side="buy",
-                type="market",
-                time_in_force="day",
-            )
-            wait_for_order_fill(api, buy_order.id)
-            positions = api.list_positions()
-            position = next((p for p in positions if p.symbol == symbol), None)
-            invested = float(position.market_value)
+            buy_order = submit_order(api, symbol, shares_to_buy, "buy")
+            wait_for_order_fill(api, buy_order["id"])
+            positions = list_positions(api)
+            position = next((p for p in positions if p["symbol"] == symbol), None)
+            invested = float(position["market_value"])
             save_balance(symbol + "_SMA", invested)
             send_telegram_message(
                 f"Bought {shares_to_buy:.6f} shares of {symbol} with available cash"
             )
             return f"Bought {shares_to_buy:.6f} shares of {symbol} with available cash."
         else:
-            invested = float(position.market_value)
+            invested = float(position["market_value"]) if position else 0
             save_balance(symbol + "_SMA", invested)
             send_telegram_message(
                 f"Index is above 200-SMA. No {symbol} shares bought because of no cash but {invested} is already invested"
             )
             return f"Index is above 200-SMA. No {symbol} shares bought because of no cash but {invested} is already invested"
     else:
-        positions = api.list_positions()
-        position = next((p for p in positions if p.symbol == symbol), None)
+        positions = list_positions(api)
+        position = next((p for p in positions if p["symbol"] == symbol), None)
         if position:
-            invested = float(position.market_value)
+            invested = float(position["market_value"])
             save_balance(symbol + "_SMA", invested)
         send_telegram_message(
             f"Index is not significantly below or above 200-SMA. No {symbol} shares sold or bought"
@@ -654,16 +656,16 @@ def check_index_drop(request):
 def wait_for_order_fill(api, order_id, timeout=300, poll_interval=5):
     elapsed_time = 0
     while elapsed_time < timeout:
-        order = api.get_order(order_id)
-        if order.status == "filled":
+        order = get_order(api, order_id)
+        if order["status"] == "filled":
             print(f"Order {order_id} filled.")
-            return float(order.filled_avg_price) * float(order.filled_qty)
-        elif order.status == "canceled":
+            return float(order["filled_avg_price"]) * float(order["filled_qty"])
+        elif order["status"] == "canceled":
             print(f"Order {order_id} was canceled.")
             send_telegram_message(f"Order {order_id} was canceled.")
             return
         else:
-            print(f"Waiting for order {order_id} to fill... (status: {order.status})")
+            print(f"Waiting for order {order_id} to fill... (status: {order['status']})")
             time.sleep(poll_interval)
             elapsed_time += poll_interval
     print(f"Timeout: Order {order_id} did not fill within {timeout} seconds.")
