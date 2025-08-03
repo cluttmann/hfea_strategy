@@ -185,7 +185,7 @@ steps:
   # Create Cloud Scheduler job for 'monthly_nine_sig_contributions' function
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'create', 'http', 'monthly_nine_sig_contributions',
+      'scheduler', 'jobs', 'update', 'http', 'monthly_nine_sig_contributions',
       '--schedule', '0 12 1-7 * *',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/monthly_nine_sig_contributions',
       '--http-method', 'POST',
@@ -198,7 +198,7 @@ steps:
   # Create Cloud Scheduler job for 'quarterly_nine_sig_signal' function
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'create', 'http', 'quarterly_nine_sig_signal',
+      'scheduler', 'jobs', 'update', 'http', 'quarterly_nine_sig_signal',
       '--schedule', '0 13 1-7 1,4,7,10 *',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/quarterly_nine_sig_signal',
       '--http-method', 'POST',
@@ -220,19 +220,6 @@ steps:
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
     ]
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
-
-  # # Create Cloud Scheduler job for 'daily_trade_efo_200sma' function
-  # - name: 'gcr.io/cloud-builders/gcloud'
-  #   args: [
-  #     'scheduler', 'jobs', 'update', 'http', 'daily_trade_efo_200sma',
-  #     '--schedule', '56 15 * * 1-5',  
-  #     '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/daily_trade_efo_200sma',
-  #     '--http-method', 'POST',
-  #     '--time-zone', 'America/New_York',
-  #     '--location', 'europe-west3',
-  #     '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
-  #   ]
-  #   waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # Cloud Scheduler Job for S&P 500 Index (POST method with request body)
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -261,19 +248,6 @@ steps:
       '--message-body', '{"index_symbol": "URTH", "index_name": "MSCI World"}'
     ]
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
-
-# # Create Cloud Scheduler job for 'monthly_buy_efo' function
-#   - name: 'gcr.io/cloud-builders/gcloud'
-#     args: [
-#       'scheduler', 'jobs', 'update', 'http', 'monthly_buy_efo',
-#       '--schedule', '0 12 1-7 * *',  
-#       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/monthly_buy_efo',
-#       '--http-method', 'POST',
-#       '--time-zone', 'America/New_York',
-#       '--location', 'europe-west3',
-#       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
-#     ]
-#     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
 options:
   logging: CLOUD_LOGGING_ONLY  # Send logs to Cloud Logging only
