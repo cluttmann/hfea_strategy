@@ -15,10 +15,11 @@ app = Flask(__name__)
 
 monthly_invest = 165
 
-# Strategy would be to allocate 40% to the SPXL, 10% to the EET, 10% to the EFO SMA 200 Strategy and 40% to HFEA
+# Strategy allocations: 47.5% HFEA, 47.5% SPXL SMA, 5% 9-Sig Strategy
 strategy_allocations = {
-    "hfea_allo": 0.5,
-    "spxl_allo": 0.5,
+    "hfea_allo": 0.475,      # Reduced from 0.5 to make room for 9-sig
+    "spxl_allo": 0.475,      # Reduced from 0.5 to make room for 9-sig
+    "nine_sig_allo": 0.05,   # New 5% allocation to 9-sig strategy
 }
 
 # Calculate investment amounts dynamically
@@ -38,6 +39,14 @@ kmlm_allocation = 0.3
 
 alpaca_environment = "live"
 margin = 0.01  # band around the 200sma to avoid too many trades
+
+# 9-sig strategy configuration following Jason Kelly's methodology
+nine_sig_config = {
+    "target_allocation": {"tqqq": 0.8, "agg": 0.2},  # 80/20 target allocation
+    "quarterly_growth_rate": 0.09,  # 9% quarterly growth target
+    "bond_rebalance_threshold": 0.30,  # Rebalance when AGG > 30%
+    "tolerance_amount": 25,  # Minimum trade amount to avoid tiny trades
+}
 
 # Initialize Firestore client
 project_id = os.getenv("GOOGLE_CLOUD_PROJECT_ID")
@@ -178,6 +187,97 @@ def load_balances():
 def update_balance_field(strategy, value):
     doc_ref = db.collection("strategy-balances").document(strategy)
     doc_ref.update({"invested": value})
+
+
+# 9-Sig Strategy Data Management Functions
+def save_nine_sig_quarterly_data(quarter_id, tqqq_balance, agg_balance, signal_line, action, quarterly_contributions):
+    """Save quarterly data following 3Sig methodology for next quarter's calculations"""
+    doc_ref = db.collection("nine-sig-quarters").document(quarter_id)
+    doc_ref.set({
+        "quarter_id": quarter_id,
+        "quarter_end_date": datetime.datetime.now().isoformat(),
+        "previous_tqqq_balance": tqqq_balance,
+        "agg_balance": agg_balance,
+        "signal_line": signal_line,
+        "action_taken": action,
+        "quarterly_contributions": quarterly_contributions,
+        "total_portfolio": tqqq_balance + agg_balance,
+        "timestamp": datetime.datetime.utcnow()
+    })
+
+
+def get_previous_quarter_tqqq_balance():
+    """Get previous quarter's TQQQ ending balance for signal line calculation"""
+    docs = db.collection("nine-sig-quarters").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1).stream()
+    for doc in docs:
+        data = doc.to_dict()
+        return data.get("previous_tqqq_balance", 0)
+    return 0
+
+
+def check_spy_30_down_rule():
+    """Check if SPY has dropped 30% from quarterly high in last 2 years"""
+    try:
+        # Get SPY data for last 2 years with quarterly intervals
+        spy = yf.download("SPY", period="2y", interval="3mo")
+        
+        if len(spy) < 8:  # Need at least 2 years of quarterly data
+            return False
+            
+        # Get highest quarterly close in last 2 years
+        highest_close = spy["Close"].max()
+        current_close = spy["Close"].iloc[-1]
+        
+        # Check if current is 30% below the high
+        drop_percentage = (highest_close - current_close) / highest_close
+        
+        return drop_percentage >= 0.30
+    except Exception as e:
+        print(f"Error checking SPY 30 down rule: {e}")
+        return False
+
+
+def count_ignored_sell_signals():
+    """Count how many sell signals have been ignored in the current crash protection period"""
+    try:
+        # Get recent quarters with ignored sell signals
+        docs = db.collection("nine-sig-quarters").where("action_taken", "==", "SELL_IGNORED").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(4).stream()
+        return len(list(docs))
+    except Exception as e:
+        print(f"Error counting ignored sell signals: {e}")
+        return 0
+
+
+def make_monthly_nine_sig_contributions(api, force_execute=False):
+    """Monthly contributions go ONLY to AGG (bonds) - Following 3Sig Rule"""
+    investment_amount = investment_amounts["nine_sig_allo"]
+    
+    if not force_execute and not check_trading_day(mode="monthly"):
+        print("Not first trading day of the month")
+        return "Not first trading day of the month"
+    
+    if force_execute:
+        print("9-Sig: Force execution enabled - bypassing trading day check")
+        send_telegram_message("9-Sig: Force execution enabled for testing - bypassing trading day check")
+    
+    # ALL monthly contributions go to AGG only (core 3Sig rule)
+    try:
+        agg_price = float(get_latest_trade(api, "AGG"))
+        agg_shares_to_buy = investment_amount / agg_price
+        
+        if agg_shares_to_buy > 0:
+            order = submit_order(api, "AGG", agg_shares_to_buy, "buy")
+            wait_for_order_fill(api, order["id"])
+            print(f"9-Sig: Bought {agg_shares_to_buy:.6f} shares of AGG (monthly contribution)")
+            send_telegram_message(f"9-Sig Monthly: Added ${investment_amount:.2f} to AGG bonds (following 3Sig methodology)")
+        
+        return f"9-Sig monthly contribution: ${investment_amount:.2f} invested in AGG"
+    
+    except Exception as e:
+        error_msg = f"9-Sig monthly contribution failed: {str(e)}"
+        print(error_msg)
+        send_telegram_message(error_msg)
+        return error_msg
 
 
 def make_monthly_buys(api):
@@ -398,6 +498,140 @@ def rebalance_portfolio(api):
     # Report completion of rebalancing check
     print("Rebalance check completed.")
     return "Rebalance executed."
+
+
+def execute_quarterly_nine_sig_signal(api, force_execute=False):
+    """Execute quarterly 9-sig signal following Jason Kelly's exact 5-step process"""
+    if not force_execute and not check_trading_day(mode="quarterly"):
+        print("Not first trading day of the quarter")
+        return "Not first trading day of the quarter"
+    
+    if force_execute:
+        print("9-Sig: Force execution enabled - bypassing trading day check")
+        send_telegram_message("9-Sig: Force execution enabled for testing - bypassing trading day check")
+    
+    try:
+        # Step 1: Get current positions
+        positions = {p["symbol"]: float(p["market_value"]) for p in list_positions(api)}
+        current_tqqq_balance = positions.get("TQQQ", 0)
+        current_agg_balance = positions.get("AGG", 0)
+        total_portfolio = current_tqqq_balance + current_agg_balance
+        
+        # Step 1: Determine the Quarter's Signal Line
+        previous_tqqq_balance = get_previous_quarter_tqqq_balance()
+        quarterly_contributions = investment_amounts["nine_sig_allo"] * 3  # 3 months
+        half_quarterly_contributions = quarterly_contributions * 0.5
+        
+        # Signal Line = Previous TQQQ Balance × 1.09 + (Half of Quarterly Contributions)
+        if previous_tqqq_balance == 0 and total_portfolio > 0:
+            # First quarter: Set signal line as 80% of total portfolio
+            signal_line = total_portfolio * nine_sig_config["target_allocation"]["tqqq"]
+            send_telegram_message("9-Sig: First quarter initialization - setting 80/20 target allocation")
+        else:
+            signal_line = (previous_tqqq_balance * (1 + nine_sig_config["quarterly_growth_rate"])) + half_quarterly_contributions
+        
+        # Step 2: Determine Action (Buy, Sell, or Hold)
+        difference = current_tqqq_balance - signal_line
+        tolerance = nine_sig_config["tolerance_amount"]
+        
+        # Step 3: Execute the Trade
+        if abs(difference) < tolerance:
+            action = "HOLD"
+            send_telegram_message(f"9-Sig: HOLD - TQQQ ${current_tqqq_balance:.2f} within tolerance of signal line ${signal_line:.2f}")
+            
+        elif difference < 0:
+            # BUY Signal: Need more TQQQ
+            amount_to_buy = abs(difference)
+            action = "BUY"
+            
+            # Step 4: Check for bond rebalancing on buy signals
+            agg_percentage = current_agg_balance / total_portfolio if total_portfolio > 0 else 0
+            if agg_percentage > nine_sig_config["bond_rebalance_threshold"]:
+                # Add excess bonds to the buy amount
+                target_agg_balance = total_portfolio * nine_sig_config["target_allocation"]["agg"]
+                excess_agg = current_agg_balance - target_agg_balance
+                amount_to_buy += excess_agg
+                send_telegram_message(f"9-Sig: Rebalancing excess AGG (${excess_agg:.2f}) during buy signal")
+            
+            if current_agg_balance >= amount_to_buy:
+                # Execute buy trade
+                tqqq_price = float(get_latest_trade(api, "TQQQ"))
+                agg_price = float(get_latest_trade(api, "AGG"))
+                
+                agg_shares_to_sell = amount_to_buy / agg_price
+                tqqq_shares_to_buy = amount_to_buy / tqqq_price
+                
+                # Sell AGG first, then buy TQQQ
+                sell_order = submit_order(api, "AGG", agg_shares_to_sell, "sell")
+                wait_for_order_fill(api, sell_order["id"])
+                
+                buy_order = submit_order(api, "TQQQ", tqqq_shares_to_buy, "buy")
+                wait_for_order_fill(api, buy_order["id"])
+                
+                send_telegram_message(f"9-Sig: BUY signal executed - Bought ${amount_to_buy:.2f} TQQQ (sold AGG)")
+            else:
+                # Insufficient AGG funds
+                send_telegram_message(f"9-Sig: BUY signal but insufficient AGG (${current_agg_balance:.2f} < ${amount_to_buy:.2f}) - HOLDING existing positions")
+                action = "HOLD_INSUFFICIENT_FUNDS"
+                
+        else:
+            # SELL Signal: Too much TQQQ
+            amount_to_sell = difference
+            action = "SELL"
+            
+            # Step 5: Check for "30 Down, Stick Around" rule
+            if check_spy_30_down_rule():
+                ignored_count = count_ignored_sell_signals()
+                
+                if ignored_count < 4:
+                    action = "SELL_IGNORED"
+                    send_telegram_message(f"9-Sig: SELL signal IGNORED due to '30 Down, Stick Around' rule (SPY down >30%). Ignored {ignored_count + 1}/4 signals.")
+                else:
+                    send_telegram_message("9-Sig: Resuming normal operation after ignoring 4 sell signals")
+            
+            if action == "SELL":
+                # Execute sell trade
+                tqqq_price = float(get_latest_trade(api, "TQQQ"))
+                agg_price = float(get_latest_trade(api, "AGG"))
+                
+                tqqq_shares_to_sell = amount_to_sell / tqqq_price
+                agg_shares_to_buy = amount_to_sell / agg_price
+                
+                # Sell TQQQ first, then buy AGG
+                sell_order = submit_order(api, "TQQQ", tqqq_shares_to_sell, "sell")
+                wait_for_order_fill(api, sell_order["id"])
+                
+                buy_order = submit_order(api, "AGG", agg_shares_to_buy, "buy")
+                wait_for_order_fill(api, buy_order["id"])
+                
+                send_telegram_message(f"9-Sig: SELL signal executed - Sold ${amount_to_sell:.2f} TQQQ (bought AGG)")
+        
+        # Save quarterly data for next calculation
+        current_quarter = f"{datetime.datetime.now().year}-Q{((datetime.datetime.now().month-1)//3+1)}"
+        save_nine_sig_quarterly_data(
+            current_quarter,
+            current_tqqq_balance,
+            current_agg_balance, 
+            signal_line,
+            action,
+            quarterly_contributions
+        )
+        
+        # Report final allocations
+        updated_positions = {p["symbol"]: float(p["market_value"]) for p in list_positions(api)}
+        updated_total = updated_positions.get("TQQQ", 0) + updated_positions.get("AGG", 0)
+        if updated_total > 0:
+            tqqq_pct = updated_positions.get("TQQQ", 0) / updated_total
+            agg_pct = updated_positions.get("AGG", 0) / updated_total
+            send_telegram_message(f"9-Sig allocation: TQQQ {tqqq_pct:.1%}, AGG {agg_pct:.1%} (Target: 80/20)")
+        
+        return f"9-Sig quarterly signal: {action}"
+    
+    except Exception as e:
+        error_msg = f"9-Sig quarterly signal failed: {str(e)}"
+        print(error_msg)
+        send_telegram_message(error_msg)
+        return error_msg
 
 
 # Function to calculate 200-SMA using yfinance
@@ -700,6 +934,18 @@ def rebalance_hfea(request):
     return rebalance_portfolio(api)
 
 
+@app.route("/monthly_nine_sig_contributions", methods=["POST"])
+def monthly_nine_sig_contributions(request):
+    api = set_alpaca_environment(env=alpaca_environment)
+    return make_monthly_nine_sig_contributions(api)
+
+
+@app.route("/quarterly_nine_sig_signal", methods=["POST"])
+def quarterly_nine_sig_signal(request):
+    api = set_alpaca_environment(env=alpaca_environment)
+    return execute_quarterly_nine_sig_signal(api)
+
+
 @app.route("/monthly_buy_spxl", methods=["POST"])
 def monthly_buy_spxl(request):
     api = set_alpaca_environment(
@@ -781,12 +1027,16 @@ def index_alert(request):
 #     return buy_tqqq_if_above_200sma(api)
 
 
-def run_local(action, env="paper", request="test"):
+def run_local(action, env="paper", request="test", force_execute=False):
     api = set_alpaca_environment(env=env, use_secret_manager=False)
     if action == "monthly_buy_hfea":
         return make_monthly_buys(api)
     elif action == "rebalance_hfea":
         return rebalance_portfolio(api)
+    elif action == "monthly_nine_sig_contributions":
+        return make_monthly_nine_sig_contributions(api, force_execute=force_execute)
+    elif action == "quarterly_nine_sig_signal":
+        return execute_quarterly_nine_sig_signal(api, force_execute=force_execute)
     elif action == "monthly_buy_spxl":
         return monthly_buying_sma(api, "SPXL")
     elif action == "sell_spxl_below_200sma":
@@ -805,16 +1055,10 @@ def run_local(action, env="paper", request="test"):
         return daily_trade_sma(api, "EFO")
     elif action == "buy_efo_above_200sma":
         return daily_trade_sma(api, "EFO")
-    # elif action == 'monthly_buy_tqqq':
-    #     return make_monthly_buy_tqqq(api)
-    # elif action == 'sell_tqqq_below_200sma':
-    #     return sell_tqqq_if_below_200sma(api)
-    # elif action == 'buy_tqqq_above_200sma':
-    #     return buy_tqqq_if_above_200sma(api)
     elif action == "index_alert":
         return check_index_drop(request)
     else:
-        return "No valid action provided. Use 'buy' or 'rebalance'."
+        return "No valid action provided."
 
 
 if __name__ == "__main__":
@@ -826,6 +1070,8 @@ if __name__ == "__main__":
         choices=[
             "monthly_buy_hfea",
             "rebalance_hfea",
+            "monthly_nine_sig_contributions",
+            "quarterly_nine_sig_signal",
             "monthly_buy_spxl",
             "sell_spxl_below_200sma",
             "buy_spxl_above_200sma",
@@ -841,7 +1087,7 @@ if __name__ == "__main__":
             "buy_efo_above_200sma",
         ],
         required=True,
-        help="Action to perform: 'monthly_buy_hfea', 'rebalance_hfea', 'monthly_buy_spxl','sell_spxl_below_200sma','buy_spxl_above_200sma','sell_tqqq_below_200sma', 'buy_tqqq_above_200sma', 'monthly_buy_tqqq','index_alert'",
+        help="Action to perform: including 9-sig strategy actions 'monthly_nine_sig_contributions', 'quarterly_nine_sig_signal'",
     )
     parser.add_argument(
         "--env",
@@ -854,10 +1100,15 @@ if __name__ == "__main__":
         action="store_true",
         help="Use Google Secret Manager for API keys",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force execution even if not on the correct trading day (for testing)",
+    )
     args = parser.parse_args()
 
     # Run the function locally
-    result = run_local(action=args.action, env=args.env)
+    result = run_local(action=args.action, env=args.env, force_execute=args.force)
     # save_balance("SPXL_SMA", 100)
     # save_balance("EET_SMA", 100)
     # save_balance("EFO_SMA", 100)
@@ -865,6 +1116,8 @@ if __name__ == "__main__":
 # local execution:
 # python3 main.py --action monthly_buy_hfea --env paper
 # python3 main.py --action rebalance_hfea --env paper
+# python3 main.py --action monthly_nine_sig_contributions --env paper --force
+# python3 main.py --action quarterly_nine_sig_signal --env paper --force
 # python3 main.py --action monthly_buy_spxl --env paper
 # python3 main.py --action sell_spxl_below_200sma --env paper
 # python3 main.py --action buy_spxl_above_200sma --env paper
