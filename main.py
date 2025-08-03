@@ -13,7 +13,7 @@ from google.cloud import firestore
 
 app = Flask(__name__)
 
-monthly_invest = 165
+monthly_invest = 170
 
 # Strategy allocations: 47.5% HFEA, 47.5% SPXL SMA, 5% 9-Sig Strategy
 strategy_allocations = {
