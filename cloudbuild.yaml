@@ -47,6 +47,38 @@ steps:
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
+  # Step 4: Deploy the monthly_nine_sig_contributions
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - functions
+    - deploy
+    - monthly_nine_sig_contributions  # The name of the Cloud Function for 9-sig monthly contributions
+    - --source=.
+    - --trigger-http
+    - --region=europe-west3
+    - --runtime=python310
+    - --timeout=540s
+    - --entry-point=monthly_nine_sig_contributions  # Entry point function in your Python code
+    - --memory=512MB
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
+
+  # Step 5: Deploy the quarterly_nine_sig_signal
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - functions
+    - deploy
+    - quarterly_nine_sig_signal  # The name of the Cloud Function for 9-sig quarterly signals
+    - --source=.
+    - --trigger-http
+    - --region=europe-west3
+    - --runtime=python310
+    - --timeout=540s
+    - --entry-point=quarterly_nine_sig_signal  # Entry point function in your Python code
+    - --memory=512MB
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
+
   # # Deploy the monthly_buy_efo
   # - name: 'gcr.io/cloud-builders/gcloud'
   #   args:
@@ -150,6 +182,31 @@ steps:
     ]
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
+  # Create Cloud Scheduler job for 'monthly_nine_sig_contributions' function
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'scheduler', 'jobs', 'create', 'http', 'monthly_nine_sig_contributions',
+      '--schedule', '0 12 1-7 * *',  
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/monthly_nine_sig_contributions',
+      '--http-method', 'POST',
+      '--time-zone', 'America/New_York',
+      '--location', 'europe-west3',
+      '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
+    ]
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
+
+  # Create Cloud Scheduler job for 'quarterly_nine_sig_signal' function
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'scheduler', 'jobs', 'create', 'http', 'quarterly_nine_sig_signal',
+      '--schedule', '0 13 1-7 1,4,7,10 *',  
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/quarterly_nine_sig_signal',
+      '--http-method', 'POST',
+      '--time-zone', 'America/New_York',
+      '--location', 'europe-west3',
+      '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
+    ]
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # Create Cloud Scheduler job for 'buy_spxl_above_200sma' function
   - name: 'gcr.io/cloud-builders/gcloud'
