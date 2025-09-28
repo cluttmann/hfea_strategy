@@ -190,64 +190,90 @@ steps:
     ]
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
-  # Cloud Scheduler Job for S&P 500 ATH Drop Alert
+  # Cloud Scheduler Job for S&P 500 ATH Drop Alert (try update first, then create if needed)
   - name: 'gcr.io/cloud-builders/gcloud'
-    args: [
-      'scheduler', 'jobs', 'create', 'http', 'sp500_drop_alert',
-      '--schedule', '30 9-15 * * 1-5',  # Runs at the 30th minute of every hour from 9 AM to 3 PM (inclusive)
-      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/index_alert',
-      '--http-method', 'POST',
-      '--time-zone', 'America/New_York',
-      '--location', 'europe-west3',
-      '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
-      '--message-body', '{"index_symbol": "^SPX", "index_name": "S&P 500", "alert_type": "ath_drop", "threshold_percent": 30.0}',
-      '--replace'  # This will update if job exists, create if it doesn't
-    ]
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud scheduler jobs update http sp500_drop_alert \
+          --schedule='30 9-15 * * 1-5' \
+          --uri='https://europe-west3-trading-436516.cloudfunctions.net/index_alert' \
+          --http-method='POST' \
+          --time-zone='America/New_York' \
+          --location='europe-west3' \
+          --oidc-service-account-email='1098661711782-compute@developer.gserviceaccount.com' \
+          --message-body='{"index_symbol": "^SPX", "index_name": "S&P 500", "alert_type": "ath_drop", "threshold_percent": 30.0}' \
+        || gcloud scheduler jobs create http sp500_drop_alert \
+          --schedule='30 9-15 * * 1-5' \
+          --uri='https://europe-west3-trading-436516.cloudfunctions.net/index_alert' \
+          --http-method='POST' \
+          --time-zone='America/New_York' \
+          --location='europe-west3' \
+          --oidc-service-account-email='1098661711782-compute@developer.gserviceaccount.com' \
+          --message-body='{"index_symbol": "^SPX", "index_name": "S&P 500", "alert_type": "ath_drop", "threshold_percent": 30.0}'
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # Cloud Scheduler Job for MSCI World ATH Drop Alert
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'create', 'http', 'msci_drop_alert',
+      'scheduler', 'jobs', 'update', 'http', 'msci_drop_alert',
       '--schedule', '30 9-15 * * 1-5',  # Runs at the 30th minute of every hour from 9 AM to 3 PM (inclusive)
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/index_alert',
       '--http-method', 'POST',
       '--time-zone', 'America/New_York',
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
-      '--message-body', '{"index_symbol": "URTH", "index_name": "MSCI World", "alert_type": "ath_drop", "threshold_percent": 30.0}',
-      '--replace'  # This will update if job exists, create if it doesn't
+      '--message-body', '{"index_symbol": "URTH", "index_name": "MSCI World", "alert_type": "ath_drop", "threshold_percent": 30.0}'
     ]
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
-  # Cloud Scheduler Job for URTH 255-day SMA crossing alert
+  # Cloud Scheduler Job for URTH 255-day SMA crossing alert (try update first, then create if needed)
   - name: 'gcr.io/cloud-builders/gcloud'
-    args: [
-      'scheduler', 'jobs', 'create', 'http', 'urth_255sma_alert',
-      '--schedule', '15 9-15 * * 1-5',  # Runs at 15 minutes past every hour from 9 AM to 3 PM on trading days
-      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/index_alert',
-      '--http-method', 'POST',
-      '--time-zone', 'America/New_York',
-      '--location', 'europe-west3',
-      '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
-      '--message-body', '{"index_symbol": "URTH", "index_name": "iShares MSCI World ETF", "alert_type": "sma_crossing", "sma_period": 255, "noise_threshold": 1.0}',
-      '--replace'  # This will update if job exists, create if it doesn't
-    ]
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud scheduler jobs update http urth_255sma_alert \
+          --schedule='15 9-15 * * 1-5' \
+          --uri='https://europe-west3-trading-436516.cloudfunctions.net/index_alert' \
+          --http-method='POST' \
+          --time-zone='America/New_York' \
+          --location='europe-west3' \
+          --oidc-service-account-email='1098661711782-compute@developer.gserviceaccount.com' \
+          --message-body='{"index_symbol": "URTH", "index_name": "iShares MSCI World ETF", "alert_type": "sma_crossing", "sma_period": 255, "noise_threshold": 1.0}' \
+        || gcloud scheduler jobs create http urth_255sma_alert \
+          --schedule='15 9-15 * * 1-5' \
+          --uri='https://europe-west3-trading-436516.cloudfunctions.net/index_alert' \
+          --http-method='POST' \
+          --time-zone='America/New_York' \
+          --location='europe-west3' \
+          --oidc-service-account-email='1098661711782-compute@developer.gserviceaccount.com' \
+          --message-body='{"index_symbol": "URTH", "index_name": "iShares MSCI World ETF", "alert_type": "sma_crossing", "sma_period": 255, "noise_threshold": 1.0}'
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
-  # Cloud Scheduler Job for SPY 200-day SMA crossing alert
+  # Cloud Scheduler Job for SPY 200-day SMA crossing alert (try update first, then create if needed)
   - name: 'gcr.io/cloud-builders/gcloud'
-    args: [
-      'scheduler', 'jobs', 'create', 'http', 'spy_200sma_alert',
-      '--schedule', '15 9-15 * * 1-5',  # Runs at 15 minutes past every hour from 9 AM to 3 PM on trading days
-      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/index_alert',
-      '--http-method', 'POST',
-      '--time-zone', 'America/New_York',
-      '--location', 'europe-west3',
-      '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
-      '--message-body', '{"index_symbol": "^GSPC", "index_name": "S&P 500 Index", "alert_type": "sma_crossing", "sma_period": 200, "noise_threshold": 1.0}',
-      '--replace'  # This will update if job exists, create if it doesn't
-    ]
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud scheduler jobs update http spy_200sma_alert \
+          --schedule='15 9-15 * * 1-5' \
+          --uri='https://europe-west3-trading-436516.cloudfunctions.net/index_alert' \
+          --http-method='POST' \
+          --time-zone='America/New_York' \
+          --location='europe-west3' \
+          --oidc-service-account-email='1098661711782-compute@developer.gserviceaccount.com' \
+          --message-body='{"index_symbol": "^GSPC", "index_name": "S&P 500 Index", "alert_type": "sma_crossing", "sma_period": 200, "noise_threshold": 1.0}' \
+        || gcloud scheduler jobs create http spy_200sma_alert \
+          --schedule='15 9-15 * * 1-5' \
+          --uri='https://europe-west3-trading-436516.cloudfunctions.net/index_alert' \
+          --http-method='POST' \
+          --time-zone='America/New_York' \
+          --location='europe-west3' \
+          --oidc-service-account-email='1098661711782-compute@developer.gserviceaccount.com' \
+          --message-body='{"index_symbol": "^GSPC", "index_name": "S&P 500 Index", "alert_type": "sma_crossing", "sma_period": 200, "noise_threshold": 1.0}'
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
 options:
