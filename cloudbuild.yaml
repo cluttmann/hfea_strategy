@@ -79,22 +79,6 @@ steps:
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
-  # # Deploy the monthly_buy_efo
-  # - name: 'gcr.io/cloud-builders/gcloud'
-  #   args:
-  #   - functions
-  #   - deploy
-  #   - monthly_buy_efo  # The name of the Cloud Function
-  #   - --source=.
-  #   - --trigger-http
-  #   - --region=europe-west3
-  #   - --runtime=python310
-  #   - --timeout=540s
-  #   - --entry-point=monthly_buy_efo  # Entry point function in your Python code
-  #   - --memory=512MB
-  #   - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
-  #   waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
-
   # Step 4: Deploy the daily_trade_spxl_200sma
   - name: 'gcr.io/cloud-builders/gcloud'
     args:
@@ -111,22 +95,6 @@ steps:
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
-  # # Step 4: Deploy the daily_trade_efo_200sma
-  # - name: 'gcr.io/cloud-builders/gcloud'
-  #   args:
-  #   - functions
-  #   - deploy
-  #   - daily_trade_efo_200sma  # The name of the Cloud Function for rebalancing
-  #   - --source=.
-  #   - --trigger-http
-  #   - --region=europe-west3
-  #   - --runtime=python310
-  #   - --timeout=540s
-  #   - --entry-point=daily_trade_efo_200sma  # Entry point function in your Python code
-  #   - --memory=512MB
-  #   - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
-  #   waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
-
   # Step 6: Deploy the unified index_alert Cloud Function with Alpaca and Telegram settings
   - name: 'gcr.io/cloud-builders/gcloud'
     args:
@@ -142,6 +110,7 @@ steps:
     - --memory=512MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
+
 
 # Create Cloud Scheduler job for 'monthly_buy_hfea' function
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -221,31 +190,63 @@ steps:
     ]
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
-  # Cloud Scheduler Job for S&P 500 Index (POST method with request body)
+  # Cloud Scheduler Job for S&P 500 ATH Drop Alert
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'update', 'http', 'sp500_drop_alert',
+      'scheduler', 'jobs', 'create', 'http', 'sp500_drop_alert',
       '--schedule', '30 9-15 * * 1-5',  # Runs at the 30th minute of every hour from 9 AM to 3 PM (inclusive)
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/index_alert',
       '--http-method', 'POST',
       '--time-zone', 'America/New_York',
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
-      '--message-body', '{"index_symbol": "^SPX", "index_name": "S&P 500"}'
+      '--message-body', '{"index_symbol": "^SPX", "index_name": "S&P 500", "alert_type": "ath_drop", "threshold_percent": 30.0}',
+      '--replace'  # This will update if job exists, create if it doesn't
     ]
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
-  # Cloud Scheduler Job for MSCI World Index (POST method with request body)
+  # Cloud Scheduler Job for MSCI World ATH Drop Alert
   - name: 'gcr.io/cloud-builders/gcloud'
     args: [
-      'scheduler', 'jobs', 'update', 'http', 'msci_drop_alert',
+      'scheduler', 'jobs', 'create', 'http', 'msci_drop_alert',
       '--schedule', '30 9-15 * * 1-5',  # Runs at the 30th minute of every hour from 9 AM to 3 PM (inclusive)
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/index_alert',
       '--http-method', 'POST',
       '--time-zone', 'America/New_York',
       '--location', 'europe-west3',
       '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
-      '--message-body', '{"index_symbol": "URTH", "index_name": "MSCI World"}'
+      '--message-body', '{"index_symbol": "URTH", "index_name": "MSCI World", "alert_type": "ath_drop", "threshold_percent": 30.0}',
+      '--replace'  # This will update if job exists, create if it doesn't
+    ]
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
+
+  # Cloud Scheduler Job for URTH 255-day SMA crossing alert
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'scheduler', 'jobs', 'create', 'http', 'urth_255sma_alert',
+      '--schedule', '15 9-15 * * 1-5',  # Runs at 15 minutes past every hour from 9 AM to 3 PM on trading days
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/index_alert',
+      '--http-method', 'POST',
+      '--time-zone', 'America/New_York',
+      '--location', 'europe-west3',
+      '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
+      '--message-body', '{"index_symbol": "URTH", "index_name": "iShares MSCI World ETF", "alert_type": "sma_crossing", "sma_period": 255, "noise_threshold": 1.0}',
+      '--replace'  # This will update if job exists, create if it doesn't
+    ]
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
+
+  # Cloud Scheduler Job for SPY 200-day SMA crossing alert
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'scheduler', 'jobs', 'create', 'http', 'spy_200sma_alert',
+      '--schedule', '15 9-15 * * 1-5',  # Runs at 15 minutes past every hour from 9 AM to 3 PM on trading days
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/index_alert',
+      '--http-method', 'POST',
+      '--time-zone', 'America/New_York',
+      '--location', 'europe-west3',
+      '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com',
+      '--message-body', '{"index_symbol": "^GSPC", "index_name": "S&P 500 Index", "alert_type": "sma_crossing", "sma_period": 200, "noise_threshold": 1.0}',
+      '--replace'  # This will update if job exists, create if it doesn't
     ]
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
