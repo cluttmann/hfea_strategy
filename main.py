@@ -66,7 +66,7 @@ def get_latest_trade(api, symbol):
         response = requests.get(url, headers=get_auth_headers(api))
         response.raise_for_status()
         return response.json()["trade"]["p"]
-    except requests.exceptions.HTTPError as e:
+    except requests.exceptions.HTTPError:
         if response.status_code == 404:
             print(f"Alpaca data not available for {symbol}, falling back to yfinance.")
             price = yf.Ticker(symbol).history(period="1d")["Close"].iloc[-1]
@@ -216,20 +216,20 @@ def get_previous_quarter_tqqq_balance():
 
 
 def check_spy_30_down_rule():
-    """Check if SPY has dropped 30% from quarterly high in last 2 years"""
+    """Check if SPY has dropped 30% from all-time high"""
     try:
-        # Get SPY data for last 2 years with quarterly intervals
-        spy = yf.download("SPY", period="2y", interval="3mo")
+        # Get SPY data for 2-year period (avoids rate limits while capturing recent crashes)
+        spy = yf.download("SPY", period="2y")
         
-        if len(spy) < 8:  # Need at least 2 years of quarterly data
+        if len(spy) < 10:  # Need sufficient data
             return False
             
-        # Get highest quarterly close in last 2 years
-        highest_close = spy["Close"].max()
+        # Get all-time high from 2-year period
+        all_time_high = spy["High"].max()
         current_close = spy["Close"].iloc[-1]
         
-        # Check if current is 30% below the high
-        drop_percentage = (highest_close - current_close) / highest_close
+        # Check if current is 30% below the all-time high
+        drop_percentage = (all_time_high - current_close) / all_time_high
         
         return drop_percentage >= 0.30
     except Exception as e:
@@ -643,6 +643,15 @@ def calculate_200sma(symbol):
     return sma_200
 
 
+# Function to calculate 255-SMA using yfinance
+def calculate_255sma(symbol):
+    """Calculate 255-day simple moving average for any symbol"""
+    # Download 2 years of daily data to ensure we have enough data for 255-day SMA
+    data = yf.download(symbol, period="2y", interval="1d")
+    sma_255 = data["Close"].rolling(window=255).mean().iloc[-1].item()
+    return sma_255
+
+
 # Function to get latest s&p price using yfinance
 def get_latest_price(symbol):
     # Fetch the real-time data for SPY
@@ -854,9 +863,11 @@ def get_index_data(index_symbol):
     return current_price, all_time_high
 
 
-def check_index_drop(request):
-    """Cloud Function that checks if an index has dropped 30% below its all-time high."""
 
+
+def check_unified_index_alert(request):
+    """Unified index alert function that can handle multiple indices and alert types"""
+    
     # Handle case where Content-Type is not set to application/json (e.g., application/octet-stream)
     if request.content_type == "application/json":
         request_json = request.get_json(silent=True)
@@ -868,32 +879,101 @@ def check_index_drop(request):
             return jsonify({"error": "Failed to parse request body"}), 400
 
     # Check if the required parameters are present
-    if request_json and "index_symbol" in request_json and "index_name" in request_json:
-        index_symbol = request_json["index_symbol"]
-        index_name = request_json["index_name"]
-    else:
-        return jsonify(
-            {"error": "Missing index_symbol or index_name in the request body"}
-        ), 400
+    if not request_json:
+        return jsonify({"error": "No request body provided"}), 400
+    
+    # Extract parameters with defaults
+    index_symbol = request_json.get("index_symbol")
+    index_name = request_json.get("index_name", index_symbol)
+    alert_type = request_json.get("alert_type", "ath_drop")  # "ath_drop", "sma_crossing"
+    sma_period = request_json.get("sma_period", 200)  # Default to 200-day SMA
+    threshold_percent = request_json.get("threshold_percent", 30.0)  # For ATH drops
+    noise_threshold = request_json.get("noise_threshold", 1.0)  # For SMA crossings
+    
+    if not index_symbol:
+        return jsonify({"error": "Missing required parameter: index_symbol"}), 400
 
-    current_price, all_time_high = get_index_data(index_symbol)
-
-    # Calculate the percentage drop
-    drop_percentage = ((all_time_high - current_price) / all_time_high) * 100
-
-    # Send alert if the index has dropped 30% or more
-    if drop_percentage >= 30:
-        message = f"Alert: {index_name} has dropped {drop_percentage:.2f}% from its ATH! Consider a loan with a duration of 6 to 8 years (50k to 100k) at around 4.5% interest max"
-        send_telegram_message(message)
-        return jsonify({"message": message}), 200
-    else:
-        # message = f"Alert: {index_name} is within safe range ({drop_percentage:.2f}% below ATH)."
-        # send_telegram_message(message)
-        return jsonify(
-            {
-                "message": f"{index_name} is within safe range ({drop_percentage:.2f}% below ATH)."
-            }
-        ), 200
+    try:
+        if alert_type == "ath_drop":
+            # Handle all-time high drop alerts
+            current_price, all_time_high = get_index_data(index_symbol)
+            drop_percentage = ((all_time_high - current_price) / all_time_high) * 100
+            
+            if drop_percentage >= threshold_percent:
+                message = f"Alert: {index_name} has dropped {drop_percentage:.2f}% from its ATH! Consider a loan with a duration of 6 to 8 years (50k to 100k) at around 4.5% interest max"
+                send_telegram_message(message)
+                return jsonify({"message": message, "status": "ath_drop_alert", "drop_percentage": drop_percentage}), 200
+            else:
+                return jsonify({
+                    "message": f"{index_name} is within safe range ({drop_percentage:.2f}% below ATH)",
+                    "status": "within_range",
+                    "drop_percentage": drop_percentage
+                }), 200
+                
+        elif alert_type == "sma_crossing":
+            # Handle SMA crossing alerts
+            current_price = get_latest_price(index_symbol)
+            
+            # Calculate appropriate SMA based on period
+            if sma_period == 255:
+                sma_value = calculate_255sma(index_symbol)
+            elif sma_period == 200:
+                sma_value = calculate_200sma(index_symbol)
+            else:
+                # For any other period, calculate dynamically
+                data = yf.download(index_symbol, period="2y", interval="1d")
+                sma_value = data["Close"].rolling(window=sma_period).mean().iloc[-1].item()
+            
+            # Calculate percentage difference from SMA
+            price_diff_percent = ((current_price - sma_value) / sma_value) * 100
+            
+            # Determine crossing direction and send appropriate alert
+            if current_price > sma_value:
+                # Price is above SMA
+                if price_diff_percent > noise_threshold:
+                    emoji = "🚀" if price_diff_percent > 2.0 else "📈"
+                    message = f"{emoji} {index_name} Alert: Crossed ABOVE its {sma_period}-day SMA! Current: ${current_price:.2f} (SMA: ${sma_value:.2f}, +{price_diff_percent:.2f}%)"
+                    send_telegram_message(message)
+                    return jsonify({
+                        "message": message, 
+                        "status": "above_sma", 
+                        "price_diff_percent": price_diff_percent,
+                        "current_price": current_price,
+                        "sma_value": sma_value
+                    }), 200
+                else:
+                    return jsonify({
+                        "message": f"{index_name} is above {sma_period}-day SMA but within noise threshold ({price_diff_percent:.2f}%)",
+                        "status": "above_sma_no_alert",
+                        "price_diff_percent": price_diff_percent
+                    }), 200
+            else:
+                # Price is below SMA
+                if price_diff_percent < -noise_threshold:
+                    emoji = "📉" if price_diff_percent < -2.0 else "📊"
+                    message = f"{emoji} {index_name} Alert: Crossed BELOW its {sma_period}-day SMA! Current: ${current_price:.2f} (SMA: ${sma_value:.2f}, {price_diff_percent:.2f}%)"
+                    send_telegram_message(message)
+                    return jsonify({
+                        "message": message, 
+                        "status": "below_sma", 
+                        "price_diff_percent": price_diff_percent,
+                        "current_price": current_price,
+                        "sma_value": sma_value
+                    }), 200
+                else:
+                    return jsonify({
+                        "message": f"{index_name} is below {sma_period}-day SMA but within noise threshold ({price_diff_percent:.2f}%)",
+                        "status": "below_sma_no_alert",
+                        "price_diff_percent": price_diff_percent
+                    }), 200
+        else:
+            return jsonify({"error": f"Invalid alert_type: {alert_type}. Must be 'ath_drop' or 'sma_crossing'"}), 400
+                
+    except Exception as e:
+        error_message = f"Error checking {index_name} alert: {str(e)}"
+        print(error_message)
+        send_telegram_message(error_message)
+        return jsonify({"error": error_message}), 500
 
 
 # Helper function to wait for an order to be filled
@@ -1008,7 +1088,7 @@ def daily_trade_efo_200sma(request):
 
 @app.route("/index_alert", methods=["POST"])
 def index_alert(request):
-    return check_index_drop(request)
+    return check_unified_index_alert(request)
 
 
 # @app.route('/monthly_buy_tqqq', methods=['POST'])
@@ -1056,7 +1136,7 @@ def run_local(action, env="paper", request="test", force_execute=False):
     elif action == "buy_efo_above_200sma":
         return daily_trade_sma(api, "EFO")
     elif action == "index_alert":
-        return check_index_drop(request)
+        return check_unified_index_alert(request)
     else:
         return "No valid action provided."
 
@@ -1121,6 +1201,7 @@ if __name__ == "__main__":
 # python3 main.py --action monthly_buy_spxl --env paper
 # python3 main.py --action sell_spxl_below_200sma --env paper
 # python3 main.py --action buy_spxl_above_200sma --env paper
+# python3 main.py --action index_alert --env paper  # For unified index alerts (use with request body)
 # python3 main.py --action monthly_buy_tqqq --env paper
 # python3 main.py --action sell_tqqq_below_200sma --env paper
 # python3 main.py --action buy_tqqq_above_200sma --env paper
