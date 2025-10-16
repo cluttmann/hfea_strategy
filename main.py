@@ -13,18 +13,12 @@ from google.cloud import firestore
 
 app = Flask(__name__)
 
-monthly_invest = 205
-
-# Strategy allocations: 47.5% HFEA, 47.5% SPXL SMA, 5% 9-Sig Strategy
+# Strategy allocation percentages for dynamic monthly investment calculation
+# Investment amounts are calculated dynamically each month based on available cash and margin
 strategy_allocations = {
-    "hfea_allo": 0.475,      # Reduced from 0.5 to make room for 9-sig
-    "spxl_allo": 0.475,      # Reduced from 0.5 to make room for 9-sig
-    "nine_sig_allo": 0.05,   # New 5% allocation to 9-sig strategy
-}
-
-# Calculate investment amounts dynamically
-investment_amounts = {
-    key: monthly_invest * allocation for key, allocation in strategy_allocations.items()
+    "hfea_allo": 0.475,      # 47.5% to HFEA
+    "spxl_allo": 0.475,      # 47.5% to SPXL SMA
+    "nine_sig_allo": 0.05,   # 5% to 9-Sig strategy
 }
 
 # Strategy would be to allocate 50% to the SPXL SMA 200 Strategy and 50% to HFEA
@@ -48,9 +42,124 @@ nine_sig_config = {
     "tolerance_amount": 25,  # Minimum trade amount to avoid tiny trades
 }
 
-# Initialize Firestore client
-project_id = os.getenv("GOOGLE_CLOUD_PROJECT_ID")
-db = firestore.Client(project=project_id)
+# Margin control configuration for automated leverage management
+# Enables up to +10% leverage only when market conditions are favorable
+margin_control_config = {
+    "target_margin_pct": 0.10,      # Maximum +10% leverage allowed
+    "max_margin_rate": 0.08,        # 8% rate threshold (FRED + spread must be ≤ this)
+    "min_buffer_pct": 0.05,         # 5% minimum buffer required
+    "max_leverage": 1.14,           # Maximum 1.14x leverage allowed
+    "spread_below_35k": 0.025,      # +2.5% spread for accounts <$35k
+    "spread_above_35k": 0.01,       # +1.0% spread for accounts ≥$35k
+    "portfolio_threshold": 35000,   # Threshold for spread calculation (in dollars)
+    "min_investment": 1.00,         # Minimum investment amount (Alpaca requirement)
+}
+
+# Firestore client - initialized lazily to respect .env file
+_db_client = None
+
+def get_firestore_client():
+    """
+    Get or initialize Firestore client with correct project ID.
+    Lazy loading ensures .env file is loaded first in local development.
+    """
+    global _db_client
+    if _db_client is None:
+        # Ensure .env is loaded for local development
+        if not is_running_in_cloud():
+            load_dotenv()
+        
+        project_id = os.getenv("GOOGLE_CLOUD_PROJECT_ID")
+        if not project_id:
+            # Fallback to GOOGLE_CLOUD_PROJECT (used in cloud environments)
+            project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
+        
+        _db_client = firestore.Client(project=project_id)
+    
+    return _db_client
+
+
+# Market data cache settings - Firestore-based for cross-function sharing
+CACHE_DURATION_MINUTES = 5  # Cache freshness window
+
+
+def get_cached_market_data(symbol, data_type):
+    """
+    Get cached market data from Firestore to avoid yfinance rate limiting.
+    Cache expires after 5 minutes. Works across all Cloud Functions.
+    
+    Args:
+        symbol: Market symbol (e.g., "^GSPC", "EEM", "EFA")
+        data_type: "price" or "sma200"
+    
+    Returns:
+        Cached value or None if not cached/expired/unavailable
+    """
+    try:
+        # Normalize symbol for Firestore document ID (remove special chars)
+        doc_id = symbol.replace("^", "").replace(".", "_")
+        
+        doc_ref = get_firestore_client().collection("market-data-cache").document(doc_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            return None
+        
+        data = doc.to_dict()
+        
+        # Check if cache is still fresh
+        timestamp = data.get("timestamp")
+        if timestamp:
+            # Convert both to naive UTC for comparison (handles timezone-aware Firestore timestamps)
+            if hasattr(timestamp, 'tzinfo') and timestamp.tzinfo is not None:
+                timestamp = timestamp.replace(tzinfo=None)
+            
+            now_utc = datetime.datetime.utcnow()
+            age_seconds = (now_utc - timestamp).total_seconds()
+            
+            if age_seconds > (CACHE_DURATION_MINUTES * 60):
+                return None  # Expired
+        
+        # Return the requested data type
+        return data.get(data_type)
+        
+    except Exception as e:
+        print(f"Warning: Could not read market data cache for {symbol}.{data_type}: {e}")
+        return None
+
+
+def set_cached_market_data(symbol, data_type, value):
+    """
+    Cache market data to Firestore to avoid redundant yfinance API calls.
+    Accessible across all Cloud Functions. Automatically expires after 5 minutes.
+    
+    Args:
+        symbol: Market symbol
+        data_type: "price" or "sma200"
+        value: Data value to cache
+    """
+    try:
+        # Normalize symbol for Firestore document ID (remove special chars)
+        doc_id = symbol.replace("^", "").replace(".", "_")
+        
+        doc_ref = get_firestore_client().collection("market-data-cache").document(doc_id)
+        
+        # Get existing data or create new
+        doc = doc_ref.get()
+        if doc.exists:
+            data = doc.to_dict()
+        else:
+            data = {"symbol": symbol}  # Store original symbol for reference
+        
+        # Update the specific data type and timestamp
+        data[data_type] = value
+        data["timestamp"] = datetime.datetime.utcnow()
+        
+        doc_ref.set(data)
+        
+    except Exception as e:
+        print(f"Warning: Could not cache market data for {symbol}.{data_type}: {e}")
+
 
 def get_auth_headers(api):
     return {
@@ -102,6 +211,15 @@ def submit_order(api, symbol, qty, side):
         "time_in_force": "day",
     }
     response = requests.post(url, headers=get_auth_headers(api), json=data)
+    
+    # Enhanced error handling to show Alpaca's actual error message
+    if not response.ok:
+        try:
+            error_detail = response.json()
+            print(f"Alpaca order error for {symbol}: {error_detail}")
+        except Exception:
+            print(f"Alpaca order error for {symbol}: {response.text}")
+    
     response.raise_for_status()
     return response.json()
 
@@ -167,32 +285,338 @@ def get_telegram_secrets():
     return telegram_key, chat_id
 
 
-def save_balance(strategy, invested):
-    doc_ref = db.collection("strategy-balances").document(strategy)
-    doc_ref.set(
-        {
-            "invested": invested,
+def get_fred_rate():
+    """
+    Fetch the current Federal Funds Target Rate (Upper Limit) from FRED API.
+    
+    Returns:
+        float: Current FRED rate as a decimal (e.g., 0.0525 for 5.25%), or None on error
+    """
+    try:
+        # Get FRED API key from Secret Manager or env
+        if is_running_in_cloud():
+            fred_key = get_secret("FREDKEY")
+        else:
+            load_dotenv()
+            fred_key = os.getenv("FREDKEY")
+        
+        if not fred_key:
+            print("FRED API key not found")
+            return None
+        
+        # Fetch DFEDTARU (Federal Funds Target Rate - Upper Limit)
+        url = f"https://api.stlouisfed.org/fred/series/observations?series_id=DFEDTARU&api_key={fred_key}&file_type=json&sort_order=desc&limit=1"
+        
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        if "observations" in data and len(data["observations"]) > 0:
+            # Get the most recent observation value
+            rate_value = data["observations"][0]["value"]
+            
+            # Handle '.' (missing data) or other non-numeric values
+            if rate_value == "." or rate_value is None:
+                print("FRED API returned missing data")
+                return None
+            
+            # Convert to float and return as decimal (FRED returns percentage, e.g., 5.25)
+            return float(rate_value) / 100.0
+        else:
+            print("No FRED data available")
+            return None
+            
+    except Exception as e:
+        print(f"Error fetching FRED rate: {e}")
+        return None
+
+
+def get_account_info(api):
+    """
+    Fetch full account information from Alpaca including equity, portfolio value, and margin data.
+    
+    Args:
+        api: Alpaca API credentials dict
+    
+    Returns:
+        dict: Account information with keys: equity, portfolio_value, maintenance_margin, cash
+              Returns None on error
+    """
+    try:
+        url = f"{api['BASE_URL']}/v2/account"
+        response = requests.get(url, headers=get_auth_headers(api))
+        response.raise_for_status()
+        
+        account_data = response.json()
+        
+        # Extract relevant fields for margin calculations
+        return {
+            "equity": float(account_data.get("equity", 0)),
+            "portfolio_value": float(account_data.get("portfolio_value", 0)),
+            "maintenance_margin": float(account_data.get("maintenance_margin", 0)),
+            "cash": float(account_data.get("cash", 0)),
         }
-    )
+    except Exception as e:
+        print(f"Error fetching account info: {e}")
+        return None
+
+
+def check_margin_conditions(api):
+    """
+    Evaluate all margin control gates to determine if leverage is allowed.
+    
+    All 4 gates must pass for margin to be enabled:
+    1. Market Trend: SPX > 200-SMA
+    2. Margin Rate: FRED rate + spread ≤ 8.0%
+    3. Buffer: (equity/portfolio_value) - (maintenance_margin/portfolio_value) ≥ 5%
+    4. Leverage: portfolio_value / equity < 1.14×
+    
+    Args:
+        api: Alpaca API credentials dict
+    
+    Returns:
+        dict: {
+            "allowed": bool - True if all gates pass
+            "target_margin": float - 0.10 if allowed, else 0.0
+            "gate_results": dict - individual gate pass/fail status
+            "metrics": dict - all calculated metrics
+            "errors": list - any errors encountered
+        }
+    """
+    result = {
+        "allowed": False,
+        "target_margin": 0.0,
+        "gate_results": {
+            "market_trend": False,
+            "margin_rate": False,
+            "buffer": False,
+            "leverage": False,
+        },
+        "metrics": {},
+        "errors": [],
+    }
+    
+    try:
+        # Gate 1: Market Trend (SPX > 200-SMA)
+        try:
+            spx_price = get_latest_price("^GSPC")
+            spx_sma = calculate_200sma("^GSPC")
+            result["metrics"]["spx_price"] = spx_price
+            result["metrics"]["spx_sma"] = spx_sma
+            result["gate_results"]["market_trend"] = spx_price > spx_sma
+        except Exception as e:
+            result["errors"].append(f"Market trend check failed: {e}")
+            return result
+        
+        # Get account information for remaining gates
+        account_info = get_account_info(api)
+        if not account_info:
+            result["errors"].append("Failed to fetch account information")
+            return result
+        
+        equity = account_info["equity"]
+        portfolio_value = account_info["portfolio_value"]
+        maintenance_margin = account_info["maintenance_margin"]
+        cash = account_info["cash"]
+        
+        result["metrics"]["equity"] = equity
+        result["metrics"]["portfolio_value"] = portfolio_value
+        result["metrics"]["maintenance_margin"] = maintenance_margin
+        result["metrics"]["cash"] = cash
+        
+        # Gate 2: Margin Rate (FRED + spread ≤ 8.0%)
+        try:
+            fred_rate = get_fred_rate()
+            if fred_rate is None:
+                result["errors"].append("Failed to fetch FRED rate")
+                return result
+            
+            # Determine spread based on equity (actual account value)
+            if equity <= margin_control_config["portfolio_threshold"]:
+                spread = margin_control_config["spread_below_35k"]
+            else:
+                spread = margin_control_config["spread_above_35k"]
+            
+            margin_rate = fred_rate + spread
+            result["metrics"]["fred_rate"] = fred_rate
+            result["metrics"]["spread"] = spread
+            result["metrics"]["margin_rate"] = margin_rate
+            result["gate_results"]["margin_rate"] = margin_rate <= margin_control_config["max_margin_rate"]
+        except Exception as e:
+            result["errors"].append(f"Margin rate check failed: {e}")
+            return result
+        
+        # Gate 3: Buffer (≥ 5%)
+        try:
+            if portfolio_value > 0:
+                buffer = (equity / portfolio_value) - (maintenance_margin / portfolio_value)
+            else:
+                buffer = 0.0
+            
+            result["metrics"]["buffer"] = buffer
+            result["gate_results"]["buffer"] = buffer >= margin_control_config["min_buffer_pct"]
+        except Exception as e:
+            result["errors"].append(f"Buffer check failed: {e}")
+            return result
+        
+        # Gate 4: Leverage (< 1.14×)
+        try:
+            if equity > 0:
+                leverage = portfolio_value / equity
+            else:
+                leverage = 0.0
+            
+            result["metrics"]["leverage"] = leverage
+            result["gate_results"]["leverage"] = leverage < margin_control_config["max_leverage"]
+        except Exception as e:
+            result["errors"].append(f"Leverage check failed: {e}")
+            return result
+        
+        # All gates must pass
+        result["allowed"] = all(result["gate_results"].values())
+        result["target_margin"] = margin_control_config["target_margin_pct"] if result["allowed"] else 0.0
+        
+    except Exception as e:
+        result["errors"].append(f"Unexpected error in margin check: {e}")
+    
+    return result
+
+
+def calculate_monthly_investments(api, margin_result):
+    """
+    Calculate dynamic monthly investment amounts based on available cash and margin.
+    
+    Steps:
+    1. Get total cash from account
+    2. Load Firestore balances for all SMA strategies  
+    3. Check which strategies are currently below their SMA (bearish)
+    4. Subtract reserved amounts only for bearish strategies
+    5. Add margin if approved (equity × 10%)
+    6. Apply Regulation T check (margin ≤ available_cash for 50/50 rule)
+    7. Split total by strategy percentages
+    
+    Args:
+        api: Alpaca API credentials
+        margin_result: Result from check_margin_conditions()
+    
+    Returns:
+        dict: {
+            "total_cash": float,           # Total cash in account
+            "total_reserved": float,       # Total reserved for bearish strategies
+            "total_available": float,      # Total cash - reserved
+            "margin_approved": float,      # Margin amount (0 if disabled)
+            "total_investing": float,      # Total available + margin
+            "strategy_amounts": dict,      # Amount per strategy
+            "reserved_amounts": dict       # What was reserved per strategy
+        }
+    """
+    # Step 1: Get total cash from account
+    metrics = margin_result.get("metrics", {})
+    total_cash = metrics.get("cash", 0)
+    equity = metrics.get("equity", 0)
+    
+    # Step 2: Load Firestore reserved amounts
+    balances = load_balances()
+    reserved_amounts = {}
+    
+    # Step 3 & 4: Check SMA status and subtract if bearish
+    for symbol, firestore_key in [("SPXL", "SPXL_SMA")]:
+        # Determine which index to check
+        if symbol == "SPXL":
+            index_symbol = "^GSPC"
+        else:
+            continue
+        
+        # Check if currently bearish (below SMA)
+        try:
+            sma_200 = calculate_200sma(index_symbol)
+            latest_price = get_latest_price(index_symbol)
+            is_bearish = latest_price < sma_200
+            
+            if is_bearish:
+                # Subtract reserved amount
+                reserved = balances.get(firestore_key, {}).get("invested", 0)
+                if reserved and reserved > 0:
+                    reserved_amounts[firestore_key] = reserved
+        except Exception as e:
+            print(f"Error checking {symbol} SMA for reserved calculation: {e}")
+            # Conservative: don't subtract if we can't determine (avoids using reserved cash)
+    
+    # Step 5: Calculate available cash
+    total_reserved = sum(reserved_amounts.values())
+    available_cash = max(0, total_cash - total_reserved)  # Ensure non-negative
+    
+    # Step 6: Add margin if approved
+    target_margin = margin_result.get("target_margin", 0)
+    if target_margin > 0 and equity > 0:
+        margin_available = equity * target_margin
+        # Our +10% cap automatically satisfies Regulation T (50% rule)
+        # No need to cap - margin is ADDITIONAL to available cash
+        margin_approved = margin_available
+    else:
+        margin_approved = 0
+    
+    total_investing = available_cash + margin_approved
+    
+    # Step 8: Split by strategy percentages
+    strategy_amounts = {
+        key: total_investing * allocation 
+        for key, allocation in strategy_allocations.items()
+    }
+    
+    return {
+        "total_cash": total_cash,
+        "total_reserved": total_reserved,
+        "total_available": available_cash,
+        "margin_approved": margin_approved,
+        "total_investing": total_investing,
+        "strategy_amounts": strategy_amounts,
+        "reserved_amounts": reserved_amounts
+    }
+
+
+def save_balance(strategy, invested):
+    """
+    Save strategy balance to Firestore.
+    Handles Firestore unavailability gracefully for local testing.
+    """
+    try:
+        doc_ref = get_firestore_client().collection("strategy-balances").document(strategy)
+        doc_ref.set(
+            {
+                "invested": invested,
+            }
+        )
+    except Exception as e:
+        print(f"Warning: Could not save balance to Firestore for {strategy}: {e}")
 
 
 def load_balances():
+    """
+    Load strategy balances from Firestore.
+    Returns empty dict if Firestore is unavailable (local testing without proper config).
+    """
     balances = {}
-    docs = db.collection("strategy-balances").stream()
-    for doc in docs:
-        balances[doc.id] = doc.to_dict()
+    try:
+        docs = get_firestore_client().collection("strategy-balances").stream()
+        for doc in docs:
+            balances[doc.id] = doc.to_dict()
+    except Exception as e:
+        print(f"Warning: Could not load Firestore balances (local testing?): {e}")
+        # Return empty dict for local testing without Firestore
     return balances
 
 
 def update_balance_field(strategy, value):
-    doc_ref = db.collection("strategy-balances").document(strategy)
+    doc_ref = get_firestore_client().collection("strategy-balances").document(strategy)
     doc_ref.update({"invested": value})
 
 
 # 9-Sig Strategy Data Management Functions
 def save_nine_sig_quarterly_data(quarter_id, tqqq_balance, agg_balance, signal_line, action, quarterly_contributions):
     """Save quarterly data following 3Sig methodology for next quarter's calculations"""
-    doc_ref = db.collection("nine-sig-quarters").document(quarter_id)
+    doc_ref = get_firestore_client().collection("nine-sig-quarters").document(quarter_id)
     doc_ref.set({
         "quarter_id": quarter_id,
         "quarter_end_date": datetime.datetime.now().isoformat(),
@@ -208,11 +632,52 @@ def save_nine_sig_quarterly_data(quarter_id, tqqq_balance, agg_balance, signal_l
 
 def get_previous_quarter_tqqq_balance():
     """Get previous quarter's TQQQ ending balance for signal line calculation"""
-    docs = db.collection("nine-sig-quarters").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1).stream()
+    docs = get_firestore_client().collection("nine-sig-quarters").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1).stream()
     for doc in docs:
         data = doc.to_dict()
         return data.get("previous_tqqq_balance", 0)
     return 0
+
+
+def track_nine_sig_monthly_contribution(amount):
+    """
+    Track actual 9-Sig monthly contribution for quarterly signal calculation.
+    Handles Firestore unavailability gracefully for local testing.
+    """
+    try:
+        current_month = datetime.datetime.now().strftime("%Y-%m")
+        doc_ref = get_firestore_client().collection("nine-sig-monthly-contributions").document(current_month)
+        doc_ref.set({
+            "month": current_month,
+            "amount": amount,
+            "timestamp": datetime.datetime.utcnow()
+        })
+    except Exception as e:
+        print(f"Warning: Could not track 9-Sig contribution to Firestore: {e}")
+
+
+def get_quarterly_nine_sig_contributions():
+    """
+    Get sum of actual 9-Sig contributions made in the current quarter.
+    Returns 0 if Firestore is unavailable (local testing).
+    """
+    try:
+        today = datetime.datetime.now()
+        
+        # Determine current quarter's start month
+        quarter_start_month = ((today.month - 1) // 3) * 3 + 1
+        quarter_start = datetime.datetime(today.year, quarter_start_month, 1)
+        
+        # Get all monthly contributions from this quarter
+        docs = get_firestore_client().collection("nine-sig-monthly-contributions").where(
+            "timestamp", ">=", quarter_start
+        ).stream()
+        
+        total_contributions = sum(doc.to_dict().get("amount", 0) for doc in docs)
+        return total_contributions
+    except Exception as e:
+        print(f"Warning: Could not load 9-Sig quarterly contributions from Firestore: {e}")
+        return 0  # Return 0 for local testing without Firestore
 
 
 def check_spy_30_down_rule():
@@ -241,17 +706,24 @@ def count_ignored_sell_signals():
     """Count how many sell signals have been ignored in the current crash protection period"""
     try:
         # Get recent quarters with ignored sell signals
-        docs = db.collection("nine-sig-quarters").where("action_taken", "==", "SELL_IGNORED").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(4).stream()
+        docs = get_firestore_client().collection("nine-sig-quarters").where("action_taken", "==", "SELL_IGNORED").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(4).stream()
         return len(list(docs))
     except Exception as e:
         print(f"Error counting ignored sell signals: {e}")
         return 0
 
 
-def make_monthly_nine_sig_contributions(api, force_execute=False):
-    """Monthly contributions go ONLY to AGG (bonds) - Following 3Sig Rule"""
-    investment_amount = investment_amounts["nine_sig_allo"]
+def make_monthly_nine_sig_contributions(api, force_execute=False, investment_calc=None, margin_result=None):
+    """
+    Monthly contributions go ONLY to AGG (bonds) - Following 3Sig Rule.
+    Now includes margin-aware logic with dynamic investment amounts and All-or-Nothing approach.
     
+    Args:
+        api: Alpaca API credentials
+        force_execute: Bypass trading day check for testing
+        investment_calc: Pre-calculated investment amounts (from orchestrator) - optional
+        margin_result: Pre-calculated margin conditions (from orchestrator) - optional
+    """
     if not force_execute and not check_trading_day(mode="monthly"):
         print("Not first trading day of the month")
         return "Not first trading day of the month"
@@ -259,6 +731,51 @@ def make_monthly_nine_sig_contributions(api, force_execute=False):
     if force_execute:
         print("9-Sig: Force execution enabled - bypassing trading day check")
         send_telegram_message("9-Sig: Force execution enabled for testing - bypassing trading day check")
+    
+    # If not provided by orchestrator, calculate independently
+    if margin_result is None:
+        margin_result = check_margin_conditions(api)
+    
+    if investment_calc is None:
+        investment_calc = calculate_monthly_investments(api, margin_result)
+    
+    investment_amount = investment_calc["strategy_amounts"]["nine_sig_allo"]
+    
+    target_margin = margin_result["target_margin"]
+    metrics = margin_result["metrics"]
+    leverage = metrics.get("leverage", 1.0)
+    
+    # Determine available buying power (already calculated in investment_calc)
+    buying_power = investment_calc["total_available"] + investment_calc["margin_approved"]
+    
+    # Check if we should skip investment
+    if target_margin == 0:
+        # Cash-only mode triggered
+        if leverage > 1.0:
+            # Still leveraged - must skip to deleverage
+            action_taken = f"Skipped - Deleveraging required (leverage: {leverage:.2f}x)"
+            send_margin_summary_message(margin_result, "9-Sig", action_taken, investment_calc)
+            print(action_taken)
+            return action_taken
+        # Equity-only but gates failed - skip without Firestore addition
+        action_taken = f"Skipped - Margin gates failed (cash-only mode, buying power: ${buying_power:.2f})"
+        send_margin_summary_message(margin_result, "9-Sig", action_taken, investment_calc)
+        print(action_taken)
+        return action_taken
+    
+    # Check if we have sufficient buying power for full investment (All-or-Nothing)
+    if buying_power < investment_amount:
+        action_taken = f"Skipped - Insufficient buying power (${buying_power:.2f} < ${investment_amount:.2f})"
+        send_margin_summary_message(margin_result, "9-Sig", action_taken, investment_calc)
+        print(action_taken)
+        return action_taken
+    
+    # Check minimum investment amount (Alpaca requirement)
+    if investment_amount < margin_control_config["min_investment"]:
+        action_taken = f"Skipped - Investment amount ${investment_amount:.2f} below Alpaca minimum ($1.00)"
+        send_margin_summary_message(margin_result, "9-Sig", action_taken, investment_calc)
+        print(action_taken)
+        return action_taken
     
     # ALL monthly contributions go to AGG only (core 3Sig rule)
     try:
@@ -269,7 +786,13 @@ def make_monthly_nine_sig_contributions(api, force_execute=False):
             order = submit_order(api, "AGG", agg_shares_to_buy, "buy")
             wait_for_order_fill(api, order["id"])
             print(f"9-Sig: Bought {agg_shares_to_buy:.6f} shares of AGG (monthly contribution)")
-            send_telegram_message(f"9-Sig Monthly: Added ${investment_amount:.2f} to AGG bonds (following 3Sig methodology)")
+            
+            # Track the actual contribution amount for quarterly signal calculation
+            track_nine_sig_monthly_contribution(investment_amount)
+            
+            # Create action summary
+            action_taken = f"Invested ${investment_amount:.2f} in AGG - {agg_shares_to_buy:.4f} shares"
+            send_margin_summary_message(margin_result, "9-Sig", action_taken, investment_calc)
         
         return f"9-Sig monthly contribution: ${investment_amount:.2f} invested in AGG"
     
@@ -280,12 +803,71 @@ def make_monthly_nine_sig_contributions(api, force_execute=False):
         return error_msg
 
 
-def make_monthly_buys(api):
-    investment_amount = investment_amounts["hfea_allo"]
-
-    if not check_trading_day(mode="monthly"):
+def make_monthly_buys(api, force_execute=False, investment_calc=None, margin_result=None):
+    """
+    Make monthly HFEA purchases with margin-aware logic and dynamic investment amounts.
+    Uses All-or-Nothing approach: invest full amount or skip entirely.
+    
+    Args:
+        api: Alpaca API credentials
+        force_execute: Bypass trading day check for testing
+        investment_calc: Pre-calculated investment amounts (from orchestrator) - optional
+        margin_result: Pre-calculated margin conditions (from orchestrator) - optional
+    """
+    if not force_execute and not check_trading_day(mode="monthly"):
         print("Not first trading day of the month")
         return "Not first trading day of the month"
+    
+    if force_execute:
+        print("HFEA: Force execution enabled - bypassing trading day check")
+        send_telegram_message("HFEA: Force execution enabled for testing - bypassing trading day check")
+    
+    # If not provided by orchestrator, calculate independently
+    if margin_result is None:
+        margin_result = check_margin_conditions(api)
+    
+    if investment_calc is None:
+        investment_calc = calculate_monthly_investments(api, margin_result)
+    
+    investment_amount = investment_calc["strategy_amounts"]["hfea_allo"]
+    
+    target_margin = margin_result["target_margin"]
+    metrics = margin_result["metrics"]
+    leverage = metrics.get("leverage", 1.0)
+    
+    # Determine available buying power (already calculated in investment_calc)
+    buying_power = investment_calc["total_available"] + investment_calc["margin_approved"]
+    
+    # Check if we should skip investment
+    if target_margin == 0:
+        # Cash-only mode triggered
+        if leverage > 1.0:
+            # Still leveraged - must skip to deleverage
+            action_taken = f"Skipped - Deleveraging required (leverage: {leverage:.2f}x)"
+            send_margin_summary_message(margin_result, "HFEA", action_taken, investment_calc)
+            print(action_taken)
+            return action_taken
+        # Equity-only but gates failed - skip without Firestore addition
+        action_taken = f"Skipped - Margin gates failed (cash-only mode, buying power: ${buying_power:.2f})"
+        send_margin_summary_message(margin_result, "HFEA", action_taken, investment_calc)
+        print(action_taken)
+        return action_taken
+    
+    # Check if we have sufficient buying power for full investment (All-or-Nothing)
+    if buying_power < investment_amount:
+        action_taken = f"Skipped - Insufficient buying power (${buying_power:.2f} < ${investment_amount:.2f})"
+        send_margin_summary_message(margin_result, "HFEA", action_taken, investment_calc)
+        print(action_taken)
+        return action_taken
+    
+    # Check minimum investment amount (Alpaca requirement)
+    if investment_amount < margin_control_config["min_investment"]:
+        action_taken = f"Skipped - Investment amount ${investment_amount:.2f} below Alpaca minimum ($1.00)"
+        send_margin_summary_message(margin_result, "HFEA", action_taken, investment_calc)
+        print(action_taken)
+        return action_taken
+    
+    # Proceed with investment - we have sufficient funds
     # Get current portfolio allocations and values from get_hfea_allocations
     (
         upro_diff,
@@ -331,6 +913,7 @@ def make_monthly_buys(api):
     kmlm_shares_to_buy = kmlm_amount / kmlm_price
 
     # Execute market orders
+    shares_bought = []
     for symbol, qty in [
         ("UPRO", upro_shares_to_buy),
         ("TMF", tmf_shares_to_buy),
@@ -339,15 +922,16 @@ def make_monthly_buys(api):
         if qty > 0:
             submit_order(api, symbol, qty, "buy")
             print(f"Bought {qty:.6f} shares of {symbol}.")
-            send_telegram_message(f"Bought {qty:.6f} shares of {symbol}.")
+            shares_bought.append(f"{symbol}: {qty:.4f} shares")
         else:
             print(f"No shares of {symbol} bought due to small amount.")
-            send_telegram_message(f"No shares of {symbol} bought due to small amount.")
-
-    # Report updated allocations
-    send_telegram_message(
-        f"Current HFEA allocation: UPRO: {current_upro_percent:.0%} - TMF: {current_tmf_percent:.0%} - KMLM: {current_kmlm_percent:.0%}"
-    )
+    
+    # Create action summary
+    action_taken = f"Invested ${investment_amount:.2f} - " + ", ".join(shares_bought)
+    
+    # Send consolidated margin summary message with investment calculation
+    send_margin_summary_message(margin_result, "HFEA", action_taken, investment_calc)
+    
     return "Monthly investment executed."
 
 
@@ -519,7 +1103,9 @@ def execute_quarterly_nine_sig_signal(api, force_execute=False):
         
         # Step 1: Determine the Quarter's Signal Line
         previous_tqqq_balance = get_previous_quarter_tqqq_balance()
-        quarterly_contributions = investment_amounts["nine_sig_allo"] * 3  # 3 months
+        
+        # Get actual contributions made during this quarter (dynamic amounts)
+        quarterly_contributions = get_quarterly_nine_sig_contributions()
         half_quarterly_contributions = quarterly_contributions * 0.5
         
         # Signal Line = Previous TQQQ Balance × 1.09 + (Half of Quarterly Contributions)
@@ -634,12 +1220,26 @@ def execute_quarterly_nine_sig_signal(api, force_execute=False):
         return error_msg
 
 
-# Function to calculate 200-SMA using yfinance
+# Function to calculate 200-SMA using yfinance with Firestore caching
 def calculate_200sma(symbol):
-    data = yf.download(
-        symbol, period="1y", interval="1d"
-    )  # Download 1 year of daily data
+    """
+    Calculate 200-day SMA with Firestore caching to avoid yfinance rate limits.
+    Cache is shared across all Cloud Functions and expires after 5 minutes.
+    """
+    # Check Firestore cache first
+    cached_value = get_cached_market_data(symbol, "sma200")
+    if cached_value is not None:
+        print(f"Using cached 200-SMA for {symbol}: {cached_value:.2f}")
+        return cached_value
+    
+    # Fetch from yfinance
+    print(f"Fetching fresh 200-SMA for {symbol} from yfinance")
+    data = yf.download(symbol, period="1y", interval="1d")
     sma_200 = data["Close"].rolling(window=200).mean().iloc[-1].item()
+    
+    # Cache the result in Firestore
+    set_cached_market_data(symbol, "sma200", sma_200)
+    
     return sma_200
 
 
@@ -652,14 +1252,27 @@ def calculate_255sma(symbol):
     return sma_255
 
 
-# Function to get latest s&p price using yfinance
+# Function to get latest price using yfinance with Firestore caching
 def get_latest_price(symbol):
-    # Fetch the real-time data for SPY
+    """
+    Get latest price with Firestore caching to avoid yfinance rate limits.
+    Cache is shared across all Cloud Functions and expires after 5 minutes.
+    """
+    # Check Firestore cache first
+    cached_value = get_cached_market_data(symbol, "price")
+    if cached_value is not None:
+        print(f"Using cached price for {symbol}: ${cached_value:.2f}")
+        return cached_value
+    
+    # Fetch from yfinance
+    print(f"Fetching fresh price for {symbol} from yfinance")
     ticker = yf.Ticker(symbol)
     data = ticker.history(period="1d")
-
-    # Get the current price
     price = data["Close"].iloc[-1]
+    
+    # Cache the result in Firestore
+    set_cached_market_data(symbol, "price", price)
+    
     return price
 
 
@@ -710,27 +1323,87 @@ def check_trading_day(mode="daily"):
     raise ValueError("Invalid mode. Use 'daily', 'monthly', or 'quarterly'.")
 
 
-def monthly_buying_sma(api, symbol):
-    if not check_trading_day(mode="monthly"):
+def monthly_buying_sma(api, symbol, force_execute=False, investment_calc=None, margin_result=None):
+    """
+    Monthly SMA-based investment with margin-aware logic and dynamic investment amounts.
+    Uses All-or-Nothing approach: invest full amount or skip entirely.
+    Only adds to Firestore when SMA trend is bearish AND account is equity-only.
+    
+    Args:
+        api: Alpaca API credentials
+        symbol: Symbol to trade (e.g., "SPXL")
+        force_execute: Bypass trading day check for testing
+        investment_calc: Pre-calculated investment amounts (from orchestrator) - optional
+        margin_result: Pre-calculated margin conditions (from orchestrator) - optional
+    """
+    if not force_execute and not check_trading_day(mode="monthly"):
         return "Not first trading day of the month"
+    
+    if force_execute:
+        print(f"{symbol} SMA: Force execution enabled - bypassing trading day check")
+        send_telegram_message(f"{symbol} SMA: Force execution enabled for testing - bypassing trading day check")
 
+    # Get symbol-specific parameters
     if symbol == "SPXL":
         sma_200 = calculate_200sma("^GSPC")
         latest_price = get_latest_price("^GSPC")
-        investment_amount = investment_amounts["spxl_allo"]
-    elif symbol == "EET":
-        sma_200 = calculate_200sma("EEM")
-        latest_price = get_latest_price("EEM")
-        investment_amount = investment_amounts["eet_allo"]
-    elif symbol == "EFO":
-        sma_200 = calculate_200sma("EFA")
-        latest_price = get_latest_price("EFA")
-        investment_amount = investment_amounts["efo_allo"]
+    else:
+        return f"Unknown symbol: {symbol}"
 
-    print(investment_amount, latest_price, sma_200)
+    # If not provided by orchestrator, calculate independently
+    if margin_result is None:
+        margin_result = check_margin_conditions(api)
+    
+    if investment_calc is None:
+        investment_calc = calculate_monthly_investments(api, margin_result)
+    
+    investment_amount = investment_calc["strategy_amounts"]["spxl_allo"]
+    
+    target_margin = margin_result["target_margin"]
+    metrics = margin_result["metrics"]
+    leverage = metrics.get("leverage", 1.0)
+    
+    # Determine available buying power (already calculated in investment_calc)
+    buying_power = investment_calc["total_available"] + investment_calc["margin_approved"]
+
+    print(f"{symbol}: Investment=${investment_amount:.2f}, Price={latest_price:.2f}, SMA={sma_200:.2f}, Leverage={leverage:.2f}x")
+    
+    # Check SMA trend
     if latest_price > sma_200 * (1 + margin):
+        # Bullish trend - attempt to buy
+        
+        # Check if we should skip investment
+        if target_margin == 0:
+            # Cash-only mode triggered
+            if leverage > 1.0:
+                # Still leveraged - must skip to deleverage
+                action_taken = f"Skipped - Deleveraging required (leverage: {leverage:.2f}x)"
+                send_margin_summary_message(margin_result, f"{symbol} SMA", action_taken, investment_calc)
+                print(action_taken)
+                return action_taken
+            # Equity-only but gates failed - skip without Firestore addition
+            action_taken = f"Skipped - Margin gates failed (cash-only mode, buying power: ${buying_power:.2f})"
+            send_margin_summary_message(margin_result, f"{symbol} SMA", action_taken, investment_calc)
+            print(action_taken)
+            return action_taken
+        
+        # Check if we have sufficient buying power for full investment (All-or-Nothing)
+        if buying_power < investment_amount:
+            action_taken = f"Skipped - Insufficient buying power (${buying_power:.2f} < ${investment_amount:.2f})"
+            send_margin_summary_message(margin_result, f"{symbol} SMA", action_taken, investment_calc)
+            print(action_taken)
+            return action_taken
+        
+        # Check minimum investment amount (Alpaca requirement)
+        if investment_amount < margin_control_config["min_investment"]:
+            action_taken = f"Skipped - Investment amount ${investment_amount:.2f} below Alpaca minimum ($1.00)"
+            send_margin_summary_message(margin_result, f"{symbol} SMA", action_taken, investment_calc)
+            print(action_taken)
+            return action_taken
+        
+        # Execute purchase
         price = get_latest_trade(api, symbol)
-        print(price)
+        print(f"Executing buy: price={price}")
         shares_to_buy = investment_amount / price
 
         if shares_to_buy > 0:
@@ -738,21 +1411,35 @@ def monthly_buying_sma(api, symbol):
             wait_for_order_fill(api, order["id"])
             positions = list_positions(api)
             position = next((p for p in positions if p["symbol"] == symbol), None)
-            invested = float(position["market_value"])
+            invested = float(position["market_value"]) if position else 0
             save_balance(symbol + "_SMA", invested)
-            send_telegram_message(f"Bought {shares_to_buy:.6f} shares of {symbol}.")
+            
+            action_taken = f"Bought {shares_to_buy:.4f} shares of {symbol} (${investment_amount:.2f})"
+            send_margin_summary_message(margin_result, f"{symbol} SMA", action_taken, investment_calc)
             return f"Bought {shares_to_buy:.6f} shares of {symbol}."
         else:
-            send_telegram_message(f"Amount too small to buy {symbol} shares.")
+            action_taken = f"Amount too small to buy {symbol} shares"
+            send_margin_summary_message(margin_result, f"{symbol} SMA", action_taken, investment_calc)
             return f"Amount too small to buy {symbol} shares."
     else:
-        invested_amount = load_balances().get(f"{symbol}_SMA", {}).get("invested", None)
-        updated_balance = investment_amount + invested_amount
-        save_balance(symbol + "_SMA", updated_balance)
-        send_telegram_message(
-            f"Index is significantly below 200-SMA and no monthly invest was done into {symbol} but {updated_balance} of the cash is allocated to to this strategy"
-        )
-        return f"Index is significantly below 200-SMA and no monthly invest was done into {symbol} but {updated_balance} of the cash is allocated to to this strategy"
+        # Bearish trend (below SMA) - skip buying
+        # Only add to Firestore if account is equity-only (leverage <= 1.0)
+        if leverage <= 1.0:
+            # Equity-only account - can add skipped amount to Firestore
+            invested_amount = load_balances().get(f"{symbol}_SMA", {}).get("invested", 0)
+            if invested_amount is None:
+                invested_amount = 0
+            updated_balance = investment_amount + invested_amount
+            save_balance(symbol + "_SMA", updated_balance)
+            
+            action_taken = f"Skipped (SMA bearish) - Added ${investment_amount:.2f} to Firestore. Total reserved: ${updated_balance:.2f}"
+            send_margin_summary_message(margin_result, f"{symbol} SMA", action_taken, investment_calc)
+            return f"Index is significantly below 200-SMA and no monthly invest was done into {symbol} but ${updated_balance:.2f} of the cash is allocated to this strategy"
+        else:
+            # Still leveraged - skip without Firestore addition (deleveraging priority)
+            action_taken = "Skipped (SMA bearish + leveraged) - No Firestore addition during deleverage"
+            send_margin_summary_message(margin_result, f"{symbol} SMA", action_taken, investment_calc)
+            return f"Index is significantly below 200-SMA. Skipping {symbol} investment (account leveraged: {leverage:.2f}x)"
 
 
 def daily_trade_sma(api, symbol):
@@ -763,12 +1450,8 @@ def daily_trade_sma(api, symbol):
     if symbol == "SPXL":
         sma_200 = calculate_200sma("^GSPC")
         latest_price = get_latest_price("^GSPC")
-    elif symbol == "EET":
-        sma_200 = calculate_200sma("EEM")
-        latest_price = get_latest_price("EEM")
-    elif symbol == "EFO":
-        sma_200 = calculate_200sma("EFA")
-        latest_price = get_latest_price("EFA")
+    else:
+        return f"Unknown symbol: {symbol}"
 
     if latest_price < sma_200 * (1 - margin):
         positions = list_positions(api)
@@ -836,6 +1519,103 @@ def send_telegram_message(message):
     return response.status_code
 
 
+def send_margin_summary_message(margin_result, strategy_name, action_taken, investment_calc=None):
+    """
+    Send consolidated monthly margin summary to Telegram.
+    
+    Args:
+        margin_result: Dict from check_margin_conditions() with gate results and metrics
+        strategy_name: Name of the strategy (e.g., "HFEA", "SPXL SMA", "9-Sig")
+        action_taken: Description of action taken (e.g., "Bought X shares", "Skipped - insufficient funds")
+        investment_calc: Optional dict from calculate_monthly_investments() with investment breakdown
+    """
+    metrics = margin_result.get("metrics", {})
+    gate_results = margin_result.get("gate_results", {})
+    errors = margin_result.get("errors", [])
+    
+    # Build the message
+    message_parts = [f"📊 {strategy_name} Monthly Update\n"]
+    
+    # Check for errors first
+    if errors:
+        message_parts.append("⚠️ ERRORS DETECTED - Defaulting to Cash-Only Mode")
+        for error in errors:
+            message_parts.append(f"  • {error}")
+        message_parts.append("")
+    
+    # Market Trend
+    spx_price = metrics.get("spx_price", 0)
+    spx_sma = metrics.get("spx_sma", 0)
+    trend_emoji = "✅" if gate_results.get("market_trend", False) else "❌"
+    message_parts.append(f"Market Trend: {trend_emoji} SPX ${spx_price:.2f} (200-SMA: ${spx_sma:.2f})")
+    
+    # Margin Rate
+    margin_rate = metrics.get("margin_rate", 0)
+    fred_rate = metrics.get("fred_rate", 0)
+    spread = metrics.get("spread", 0)
+    rate_emoji = "✅" if gate_results.get("margin_rate", False) else "❌"
+    message_parts.append(f"Margin Rate: {rate_emoji} {margin_rate*100:.1f}% (FRED {fred_rate*100:.1f}% + {spread*100:.1f}%)")
+    
+    # Buffer
+    buffer = metrics.get("buffer", 0)
+    buffer_emoji = "✅" if gate_results.get("buffer", False) else "❌"
+    message_parts.append(f"Buffer: {buffer_emoji} {buffer*100:.1f}%")
+    
+    # Leverage
+    leverage = metrics.get("leverage", 0)
+    leverage_emoji = "✅" if gate_results.get("leverage", False) else "❌"
+    message_parts.append(f"Leverage: {leverage_emoji} {leverage:.2f}x")
+    
+    # Decision
+    message_parts.append("")
+    if margin_result.get("allowed", False):
+        message_parts.append("Decision: 🟢 Margin ENABLED (+10%)")
+    else:
+        message_parts.append("Decision: 🔴 Cash-Only Mode")
+    
+    # Investment Calculation (if provided)
+    if investment_calc:
+        message_parts.append("\n💰 Monthly Investment Calculation:")
+        message_parts.append(f"Total Cash: ${investment_calc['total_cash']:,.2f}")
+        if investment_calc['total_reserved'] > 0:
+            message_parts.append(f"Reserved (bearish): ${investment_calc['total_reserved']:,.2f}")
+            # Show which strategies are reserved
+            for key, value in investment_calc['reserved_amounts'].items():
+                message_parts.append(f"  • {key}: ${value:,.2f}")
+        message_parts.append(f"Available: ${investment_calc['total_available']:,.2f}")
+        if investment_calc['margin_approved'] > 0:
+            message_parts.append(f"Margin Approved: ${investment_calc['margin_approved']:,.2f}")
+        message_parts.append("━━━━━━━━━━━━━━━━━━━━━━")
+        message_parts.append(f"Total Investing: ${investment_calc['total_investing']:,.2f}")
+        
+        # Show this strategy's allocation
+        strategy_key = None
+        if "HFEA" in strategy_name:
+            strategy_key = "hfea_allo"
+            pct = "47.5%"
+        elif "9-Sig" in strategy_name:
+            strategy_key = "nine_sig_allo"
+            pct = "5%"
+        elif "SMA" in strategy_name:
+            strategy_key = "spxl_allo"
+            pct = "47.5%"
+        
+        if strategy_key and strategy_key in investment_calc['strategy_amounts']:
+            message_parts.append(f"\nThis Strategy ({pct}): ${investment_calc['strategy_amounts'][strategy_key]:,.2f}")
+    
+    # Account Info
+    equity = metrics.get("equity", 0)
+    portfolio_value = metrics.get("portfolio_value", 0)
+    message_parts.append(f"\nAccount: Equity ${equity:,.2f} | Portfolio ${portfolio_value:,.2f}")
+    
+    # Action Taken
+    message_parts.append(f"\nAction: {action_taken}")
+    
+    # Send the consolidated message
+    full_message = "\n".join(message_parts)
+    send_telegram_message(full_message)
+
+
 # Function to get the chat title
 def get_chat_title():
     telegram_key, chat_id = get_telegram_secrets()
@@ -861,6 +1641,175 @@ def get_index_data(index_symbol):
     current_price = data["Close"].iloc[-1].item()
 
     return current_price, all_time_high
+
+
+def get_index_sma_state(index_symbol, sma_period):
+    """
+    Load the previous SMA state for an index from Firestore.
+    
+    Args:
+        index_symbol: Market symbol (e.g., "^GSPC")
+        sma_period: SMA period (e.g., 200, 255)
+    
+    Returns:
+        dict with keys: state, last_checked, last_price, last_sma
+        Returns None if no previous state exists
+    """
+    try:
+        # Normalize symbol for Firestore document ID
+        doc_id = f"{index_symbol.replace('^', '').replace('.', '_')}_{sma_period}"
+        
+        doc_ref = get_firestore_client().collection("index-sma-states").document(doc_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            return None
+        
+        return doc.to_dict()
+        
+    except Exception as e:
+        print(f"Warning: Could not load SMA state for {index_symbol}: {e}")
+        return None
+
+
+def save_index_sma_state(index_symbol, sma_period, state, price, sma_value):
+    """
+    Save the current SMA state for an index to Firestore.
+    
+    Args:
+        index_symbol: Market symbol
+        sma_period: SMA period
+        state: Current state ("above", "below", or "neutral")
+        price: Current price
+        sma_value: Current SMA value
+    """
+    try:
+        # Normalize symbol for Firestore document ID
+        doc_id = f"{index_symbol.replace('^', '').replace('.', '_')}_{sma_period}"
+        
+        doc_ref = get_firestore_client().collection("index-sma-states").document(doc_id)
+        doc_ref.set({
+            "index_symbol": index_symbol,
+            "sma_period": sma_period,
+            "state": state,
+            "last_price": price,
+            "last_sma": sma_value,
+            "last_checked": datetime.datetime.utcnow(),
+            "timestamp": datetime.datetime.utcnow()
+        })
+        
+    except Exception as e:
+        print(f"Warning: Could not save SMA state for {index_symbol}: {e}")
+
+
+def is_last_trading_hour():
+    """
+    Check if current time is within the last hour of the trading day.
+    
+    Returns:
+        bool: True if within 1 hour of market close, False otherwise
+    """
+    try:
+        # Get current time
+        now = datetime.datetime.now()
+        
+        # Load NYSE calendar
+        nyse = mcal.get_calendar("NYSE")
+        
+        # Get today's schedule
+        schedule = nyse.schedule(start_date=now.date(), end_date=now.date())
+        
+        if schedule.empty:
+            # Market is closed today
+            return False
+        
+        # Get market close time for today
+        market_close = schedule.iloc[0]['market_close']
+        
+        # Convert to naive datetime for comparison (both in local timezone)
+        if hasattr(market_close, 'tz_localize'):
+            market_close_naive = market_close.tz_localize(None)
+        elif hasattr(market_close, 'tz_convert'):
+            market_close_naive = market_close.tz_convert(None)
+        else:
+            market_close_naive = market_close.replace(tzinfo=None)
+        
+        # Calculate time until market close
+        time_until_close = market_close_naive - now
+        
+        # Check if within last hour (3600 seconds)
+        return 0 <= time_until_close.total_seconds() <= 3600
+        
+    except Exception as e:
+        print(f"Warning: Could not determine if last trading hour: {e}")
+        return False
+
+
+def was_last_hour_alert_sent_today(index_symbol, sma_period):
+    """
+    Check if a last-hour confirmation alert was already sent today.
+    
+    Args:
+        index_symbol: Market symbol
+        sma_period: SMA period
+    
+    Returns:
+        bool: True if alert was already sent today, False otherwise
+    """
+    try:
+        # Normalize symbol for Firestore document ID
+        doc_id = f"{index_symbol.replace('^', '').replace('.', '_')}_{sma_period}_last_hour"
+        
+        doc_ref = get_firestore_client().collection("index-last-hour-alerts").document(doc_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            return False
+        
+        data = doc.to_dict()
+        last_alert_date = data.get("alert_date")
+        
+        if not last_alert_date:
+            return False
+        
+        # Check if alert was sent today
+        today = datetime.datetime.now().date()
+        
+        # Handle both string and datetime formats
+        if isinstance(last_alert_date, str):
+            last_alert_date = datetime.datetime.fromisoformat(last_alert_date).date()
+        elif hasattr(last_alert_date, 'date'):
+            last_alert_date = last_alert_date.date()
+        
+        return last_alert_date == today
+        
+    except Exception as e:
+        print(f"Warning: Could not check last hour alert status: {e}")
+        return False
+
+
+def mark_last_hour_alert_sent(index_symbol, sma_period):
+    """
+    Mark that a last-hour confirmation alert was sent today.
+    
+    Args:
+        index_symbol: Market symbol
+        sma_period: SMA period
+    """
+    try:
+        # Normalize symbol for Firestore document ID
+        doc_id = f"{index_symbol.replace('^', '').replace('.', '_')}_{sma_period}_last_hour"
+        
+        doc_ref = get_firestore_client().collection("index-last-hour-alerts").document(doc_id)
+        doc_ref.set({
+            "index_symbol": index_symbol,
+            "sma_period": sma_period,
+            "alert_date": datetime.datetime.now().date().isoformat(),
+            "timestamp": datetime.datetime.utcnow()
+        })
+        
+    except Exception as e:
+        print(f"Warning: Could not mark last hour alert as sent: {e}")
 
 
 
@@ -911,7 +1860,7 @@ def check_unified_index_alert(request):
                 }), 200
                 
         elif alert_type == "sma_crossing":
-            # Handle SMA crossing alerts
+            # Handle SMA crossing alerts with crossover detection
             current_price = get_latest_price(index_symbol)
             
             # Calculate appropriate SMA based on period
@@ -927,45 +1876,99 @@ def check_unified_index_alert(request):
             # Calculate percentage difference from SMA
             price_diff_percent = ((current_price - sma_value) / sma_value) * 100
             
-            # Determine crossing direction and send appropriate alert
-            if current_price > sma_value:
-                # Price is above SMA
-                if price_diff_percent > noise_threshold:
-                    emoji = "🚀" if price_diff_percent > 2.0 else "📈"
-                    message = f"{emoji} {index_name} Alert: Crossed ABOVE its {sma_period}-day SMA! Current: ${current_price:.2f} (SMA: ${sma_value:.2f}, +{price_diff_percent:.2f}%)"
-                    send_telegram_message(message)
-                    return jsonify({
-                        "message": message, 
-                        "status": "above_sma", 
-                        "price_diff_percent": price_diff_percent,
-                        "current_price": current_price,
-                        "sma_value": sma_value
-                    }), 200
-                else:
-                    return jsonify({
-                        "message": f"{index_name} is above {sma_period}-day SMA but within noise threshold ({price_diff_percent:.2f}%)",
-                        "status": "above_sma_no_alert",
-                        "price_diff_percent": price_diff_percent
-                    }), 200
+            # Load previous state from Firestore
+            previous_state_data = get_index_sma_state(index_symbol, sma_period)
+            previous_state = previous_state_data.get("state") if previous_state_data else None
+            
+            # Determine current state based on noise threshold
+            if price_diff_percent > noise_threshold:
+                current_state = "above"
+            elif price_diff_percent < -noise_threshold:
+                current_state = "below"
             else:
-                # Price is below SMA
-                if price_diff_percent < -noise_threshold:
+                current_state = "neutral"
+            
+            # Check if we're in the last trading hour
+            in_last_hour = is_last_trading_hour()
+            already_sent_last_hour = was_last_hour_alert_sent_today(index_symbol, sma_period)
+            
+            # Initialize response variables
+            message = None
+            status = None
+            alert_sent = False
+            
+            # Check for state change (crossover)
+            if previous_state and previous_state != current_state:
+                # State changed - send crossover alert
+                if current_state == "above":
+                    emoji = "🚀" if price_diff_percent > 2.0 else "📈"
+                    urgency = " ⚡🔔 LAST HOUR" if in_last_hour else ""
+                    message = f"{emoji} {index_name} Alert: Crossed ABOVE its {sma_period}-day SMA!{urgency}\nCurrent: ${current_price:.2f} (SMA: ${sma_value:.2f}, +{price_diff_percent:.2f}%)"
+                    status = "crossover_above"
+                    alert_sent = True
+                    
+                elif current_state == "below":
                     emoji = "📉" if price_diff_percent < -2.0 else "📊"
-                    message = f"{emoji} {index_name} Alert: Crossed BELOW its {sma_period}-day SMA! Current: ${current_price:.2f} (SMA: ${sma_value:.2f}, {price_diff_percent:.2f}%)"
+                    urgency = " ⚡🔔 LAST HOUR" if in_last_hour else ""
+                    message = f"{emoji} {index_name} Alert: Crossed BELOW its {sma_period}-day SMA!{urgency}\nCurrent: ${current_price:.2f} (SMA: ${sma_value:.2f}, {price_diff_percent:.2f}%)"
+                    status = "crossover_below"
+                    alert_sent = True
+                    
+                elif current_state == "neutral":
+                    # Moved into neutral zone from above or below
+                    message = f"📊 {index_name}: Entered neutral zone (within {noise_threshold}% of {sma_period}-day SMA)\nCurrent: ${current_price:.2f} (SMA: ${sma_value:.2f}, {price_diff_percent:+.2f}%)"
+                    status = "neutral_zone"
+                    alert_sent = True
+                
+                # Send the crossover alert
+                if message:
                     send_telegram_message(message)
-                    return jsonify({
-                        "message": message, 
-                        "status": "below_sma", 
-                        "price_diff_percent": price_diff_percent,
-                        "current_price": current_price,
-                        "sma_value": sma_value
-                    }), 200
-                else:
-                    return jsonify({
-                        "message": f"{index_name} is below {sma_period}-day SMA but within noise threshold ({price_diff_percent:.2f}%)",
-                        "status": "below_sma_no_alert",
-                        "price_diff_percent": price_diff_percent
-                    }), 200
+                    # If sent during last hour, mark it
+                    if in_last_hour:
+                        mark_last_hour_alert_sent(index_symbol, sma_period)
+            
+            # Check for last hour confirmation (only if no crossover alert was sent)
+            elif in_last_hour and not already_sent_last_hour and current_state != "neutral":
+                # Send urgent confirmation alert during last trading hour
+                if current_state == "above":
+                    message = f"⚡🔔 {index_name} FINAL HOUR CONFIRMATION:\nStill ABOVE {sma_period}-day SMA\nCurrent: ${current_price:.2f} (SMA: ${sma_value:.2f}, +{price_diff_percent:.2f}%)\n\n✅ Signal: Buy/Hold position"
+                    status = "last_hour_above"
+                    alert_sent = True
+                elif current_state == "below":
+                    message = f"⚡🔔 {index_name} FINAL HOUR CONFIRMATION:\nStill BELOW {sma_period}-day SMA\nCurrent: ${current_price:.2f} (SMA: ${sma_value:.2f}, {price_diff_percent:.2f}%)\n\n❌ Signal: Avoid/Sell position"
+                    status = "last_hour_below"
+                    alert_sent = True
+                
+                # Send the last hour confirmation
+                if message:
+                    send_telegram_message(message)
+                    mark_last_hour_alert_sent(index_symbol, sma_period)
+            
+            # Save current state to Firestore (always update)
+            save_index_sma_state(index_symbol, sma_period, current_state, current_price, sma_value)
+            
+            # Return appropriate response
+            if alert_sent:
+                return jsonify({
+                    "message": message,
+                    "status": status,
+                    "price_diff_percent": price_diff_percent,
+                    "current_price": current_price,
+                    "sma_value": sma_value,
+                    "previous_state": previous_state,
+                    "current_state": current_state
+                }), 200
+            else:
+                # No alert sent - state unchanged
+                return jsonify({
+                    "message": f"{index_name} is {current_state} {sma_period}-day SMA (no state change, no alert sent)",
+                    "status": f"{current_state}_no_change",
+                    "price_diff_percent": price_diff_percent,
+                    "current_price": current_price,
+                    "sma_value": sma_value,
+                    "previous_state": previous_state,
+                    "current_state": current_state
+                }), 200
         else:
             return jsonify({"error": f"Invalid alert_type: {alert_type}. Must be 'ath_drop' or 'sma_crossing'"}), 400
                 
@@ -996,6 +1999,64 @@ def wait_for_order_fill(api, order_id, timeout=300, poll_interval=5):
     send_telegram_message(
         f"Timeout: Order {order_id} did not fill within {timeout} seconds."
     )
+
+
+def monthly_invest_all_strategies(api, force_execute=False):
+    """
+    Orchestrator function that runs all three monthly investment strategies.
+    Calculates budgets ONCE and distributes them to ensure exact percentage splits.
+    
+    This prevents the problem of each function independently calculating and over-spending.
+    
+    Args:
+        api: Alpaca API credentials
+        force_execute: Bypass trading day check for testing
+    
+    Returns:
+        dict with results from all three strategies
+    """
+    if not force_execute and not check_trading_day(mode="monthly"):
+        print("Not first trading day of the month")
+        return {"error": "Not first trading day of the month"}
+    
+    # Calculate margin conditions and investment amounts ONCE
+    print("=== Monthly Investment Orchestrator ===")
+    print("Calculating budgets for all strategies...")
+    
+    margin_result = check_margin_conditions(api)
+    investment_calc = calculate_monthly_investments(api, margin_result)
+    
+    print(f"Total investing power: ${investment_calc['total_investing']:.2f}")
+    print(f"  HFEA (47.5%): ${investment_calc['strategy_amounts']['hfea_allo']:.2f}")
+    print(f"  SPXL (47.5%): ${investment_calc['strategy_amounts']['spxl_allo']:.2f}")
+    print(f"  9-Sig (5%): ${investment_calc['strategy_amounts']['nine_sig_allo']:.2f}")
+    
+    # Run all three strategies with pre-calculated budgets
+    results = {}
+    
+    print("\n=== Executing HFEA ===")
+    results["hfea"] = make_monthly_buys(api, force_execute, investment_calc, margin_result)
+    
+    print("\n=== Executing SPXL SMA ===")
+    results["spxl"] = monthly_buying_sma(api, "SPXL", force_execute, investment_calc, margin_result)
+    
+    print("\n=== Executing 9-Sig ===")
+    results["nine_sig"] = make_monthly_nine_sig_contributions(api, force_execute, investment_calc, margin_result)
+    
+    print("\n=== All Monthly Strategies Complete ===")
+    
+    return results
+
+
+@app.route("/monthly_invest_all", methods=["POST"])
+def monthly_invest_all(request):
+    """
+    Orchestrator endpoint that runs all three monthly strategies in one coordinated execution.
+    Recommended for production use to ensure exact budget splits and avoid over-spending.
+    """
+    api = set_alpaca_environment(env=alpaca_environment)
+    results = monthly_invest_all_strategies(api)
+    return jsonify(results), 200
 
 
 @app.route("/monthly_buy_hfea", methods=["POST"])
@@ -1036,52 +2097,12 @@ def monthly_buy_spxl(request):
     return result, 200
 
 
-@app.route("/monthly_buy_eet", methods=["POST"])
-def monthly_buy_eet(request):
-    api = set_alpaca_environment(
-        env=alpaca_environment
-    )  # or 'paper' based on your needs
-    result = monthly_buying_sma(api, "EET")
-    print(result)
-    return result, 200
-
-
-@app.route("/monthly_buy_efo", methods=["POST"])
-def monthly_buy_efo(request):
-    api = set_alpaca_environment(
-        env=alpaca_environment
-    )  # or 'paper' based on your needs
-    result = monthly_buying_sma(api, "EFO")
-    print(result)
-    return result, 200
-
-
 @app.route("/daily_trade_spxl_200sma", methods=["POST"])
 def daily_trade_spxl_200sma(request):
     api = set_alpaca_environment(
         env=alpaca_environment
     )  # or 'paper' based on your needs
     result = daily_trade_sma(api, "SPXL")
-    print(result)
-    return result, 200
-
-
-@app.route("/daily_trade_eet_200sma", methods=["POST"])
-def daily_trade_eet_200sma(request):
-    api = set_alpaca_environment(
-        env=alpaca_environment
-    )  # or 'paper' based on your needs
-    result = daily_trade_sma(api, "EET")
-    print(result)
-    return result, 200
-
-
-@app.route("/daily_trade_efo_200sma", methods=["POST"])
-def daily_trade_efo_200sma(request):
-    api = set_alpaca_environment(
-        env=alpaca_environment
-    )  # or 'paper' based on your needs
-    result = daily_trade_sma(api, "EFO")
     print(result)
     return result, 200
 
@@ -1109,8 +2130,10 @@ def index_alert(request):
 
 def run_local(action, env="paper", request="test", force_execute=False):
     api = set_alpaca_environment(env=env, use_secret_manager=False)
-    if action == "monthly_buy_hfea":
-        return make_monthly_buys(api)
+    if action == "monthly_invest_all":
+        return monthly_invest_all_strategies(api, force_execute=force_execute)
+    elif action == "monthly_buy_hfea":
+        return make_monthly_buys(api, force_execute=force_execute)
     elif action == "rebalance_hfea":
         return rebalance_portfolio(api)
     elif action == "monthly_nine_sig_contributions":
@@ -1118,23 +2141,11 @@ def run_local(action, env="paper", request="test", force_execute=False):
     elif action == "quarterly_nine_sig_signal":
         return execute_quarterly_nine_sig_signal(api, force_execute=force_execute)
     elif action == "monthly_buy_spxl":
-        return monthly_buying_sma(api, "SPXL")
+        return monthly_buying_sma(api, "SPXL", force_execute=force_execute)
     elif action == "sell_spxl_below_200sma":
         return daily_trade_sma(api, "SPXL")
     elif action == "buy_spxl_above_200sma":
         return daily_trade_sma(api, "SPXL")
-    elif action == "monthly_buy_eet":
-        return monthly_buying_sma(api, "EET")
-    elif action == "sell_eet_below_200sma":
-        return daily_trade_sma(api, "EET")
-    elif action == "buy_eet_above_200sma":
-        return daily_trade_sma(api, "EET")
-    elif action == "monthly_buy_efo":
-        return monthly_buying_sma(api, "EFO")
-    elif action == "sell_efo_below_200sma":
-        return daily_trade_sma(api, "EFO")
-    elif action == "buy_efo_above_200sma":
-        return daily_trade_sma(api, "EFO")
     elif action == "index_alert":
         return check_unified_index_alert(request)
     else:
@@ -1148,6 +2159,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--action",
         choices=[
+            "monthly_invest_all",
             "monthly_buy_hfea",
             "rebalance_hfea",
             "monthly_nine_sig_contributions",
@@ -1155,19 +2167,10 @@ if __name__ == "__main__":
             "monthly_buy_spxl",
             "sell_spxl_below_200sma",
             "buy_spxl_above_200sma",
-            "index_alert",
-            "sell_tqqq_below_200sma",
-            "buy_tqqq_above_200sma",
-            "monthly_buy_tqqq",
-            "monthly_buy_eet",
-            "sell_eet_below_200sma",
-            "buy_eet_above_200sma",
-            "monthly_buy_efo",
-            "sell_efo_below_200sma",
-            "buy_efo_above_200sma",
+            "index_alert"
         ],
         required=True,
-        help="Action to perform: including 9-sig strategy actions 'monthly_nine_sig_contributions', 'quarterly_nine_sig_signal'",
+        help="Action to perform: 'monthly_invest_all' runs all three monthly strategies with coordinated budgets (recommended)",
     )
     parser.add_argument(
         "--env",
@@ -1190,23 +2193,21 @@ if __name__ == "__main__":
     # Run the function locally
     result = run_local(action=args.action, env=args.env, force_execute=args.force)
     # save_balance("SPXL_SMA", 100)
-    # save_balance("EET_SMA", 100)
-    # save_balance("EFO_SMA", 100)
 
 # local execution:
-# python3 main.py --action monthly_buy_hfea --env paper
-# python3 main.py --action rebalance_hfea --env paper
+# RECOMMENDED - Run all monthly strategies with coordinated budgets:
+# python3 main.py --action monthly_invest_all --env paper --force
+#
+# Individual strategy execution (for testing):
+# python3 main.py --action monthly_buy_hfea --env paper --force
+# python3 main.py --action monthly_buy_spxl --env paper --force
 # python3 main.py --action monthly_nine_sig_contributions --env paper --force
+#
+# Other actions:
+# python3 main.py --action rebalance_hfea --env paper
 # python3 main.py --action quarterly_nine_sig_signal --env paper --force
-# python3 main.py --action monthly_buy_spxl --env paper
 # python3 main.py --action sell_spxl_below_200sma --env paper
 # python3 main.py --action buy_spxl_above_200sma --env paper
 # python3 main.py --action index_alert --env paper  # For unified index alerts (use with request body)
-# python3 main.py --action monthly_buy_tqqq --env paper
-# python3 main.py --action sell_tqqq_below_200sma --env paper
-# python3 main.py --action buy_tqqq_above_200sma --env paper
-# python3 main.py --action buy_eet_above_200sma --env paper
-# python3 main.py --action sell_eet_below_200sma --env paper
-
 
 # consider shifting to short term bonds when 200sma is below https://app.alpaca.markets/trade/BIL?asset_class=stocks
