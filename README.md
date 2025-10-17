@@ -1,4 +1,4 @@
-# HFEA Strategy with Alpaca and Google Cloud Functions
+# Investment Strategy with Alpaca and Google Cloud Functions
 
 This project contains a set of Python Cloud Functions for managing a multi-strategy portfolio using Alpaca's trading API. The portfolio consists of three distinct investment strategies: **High-Frequency Equity Allocation (HFEA)**, **S&P 500 with 200-SMA**, and **9-Sig Strategy (Jason Kelly Methodology)**.
 
