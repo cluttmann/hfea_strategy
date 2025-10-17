@@ -89,8 +89,8 @@ def get_cached_market_data(symbol, data_type):
     Cache expires after 5 minutes. Works across all Cloud Functions.
     
     Args:
-        symbol: Market symbol (e.g., "^GSPC", "EEM", "EFA")
-        data_type: "price", "sma200", or "sma255"
+        symbol: Market symbol (e.g., "SPY", "URTH", "EEM", "EFA")
+        data_type: "price", "sma200", "sma255", or state fields
     
     Returns:
         Cached value or None if not cached/expired/unavailable
@@ -125,6 +125,58 @@ def get_cached_market_data(symbol, data_type):
         
     except Exception as e:
         print(f"Warning: Could not read market data cache for {symbol}.{data_type}: {e}")
+        return None
+
+
+def get_all_market_data(symbol):
+    """
+    Get ALL market data for a symbol efficiently.
+    Use this when you need multiple metrics (price, sma200, sma255, states).
+    If cache is stale, fetches fresh and calculates all metrics at once.
+    
+    Args:
+        symbol: Stock symbol (e.g., "SPY", "URTH")
+    
+    Returns:
+        dict with all market data: price, sma200, sma255, sma200_state, sma255_state, timestamp
+        Or None if cache is stale (triggers update)
+    
+    Example:
+        data = get_all_market_data("SPY")
+        if data is None:
+            data = update_market_data("SPY")
+        spy_price = data["price"]
+        spy_sma = data["sma200"]
+    """
+    try:
+        # Normalize symbol for Firestore document ID
+        doc_id = symbol.replace("^", "").replace(".", "_")
+        
+        doc_ref = get_firestore_client().collection("market-data").document(doc_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            return None
+        
+        data = doc.to_dict()
+        
+        # Check if cache is still fresh
+        timestamp = data.get("timestamp")
+        if timestamp:
+            # Convert both to naive UTC for comparison (handles timezone-aware Firestore timestamps)
+            if hasattr(timestamp, 'tzinfo') and timestamp.tzinfo is not None:
+                timestamp = timestamp.replace(tzinfo=None)
+            
+            now_utc = datetime.datetime.utcnow()
+            age_seconds = (now_utc - timestamp).total_seconds()
+            
+            if age_seconds > (CACHE_DURATION_MINUTES * 60):
+                return None  # Expired - caller should update
+        
+        return data
+        
+    except Exception as e:
+        print(f"Warning: Could not read market data for {symbol}: {e}")
         return None
 
 
@@ -456,8 +508,13 @@ def check_margin_conditions(api):
     try:
         # Gate 1: Market Trend (SPY > 200-SMA as S&P 500 proxy)
         try:
-            spy_price = get_latest_price("SPY")
-            spy_sma = calculate_200sma("SPY")
+            # Get all SPY data at once (efficient single fetch/read)
+            spy_data = get_all_market_data("SPY")
+            if spy_data is None:
+                spy_data = update_market_data("SPY")
+            
+            spy_price = spy_data["price"]
+            spy_sma = spy_data["sma200"]
             result["metrics"]["spx_price"] = spy_price  # Keep key name for compatibility
             result["metrics"]["spx_sma"] = spy_sma
             result["gate_results"]["market_trend"] = spy_price > spy_sma
@@ -586,8 +643,13 @@ def calculate_monthly_investments(api, margin_result):
         
         # Check if currently bearish (below SMA)
         try:
-            sma_200 = calculate_200sma(index_symbol)
-            latest_price = get_latest_price(index_symbol)
+            # Get all market data at once (efficient single fetch/read)
+            market_data = get_all_market_data(index_symbol)
+            if market_data is None:
+                market_data = update_market_data(index_symbol)
+            
+            sma_200 = market_data["sma200"]
+            latest_price = market_data["price"]
             is_bearish = latest_price < sma_200
             
             if is_bearish:
@@ -1304,120 +1366,90 @@ def execute_quarterly_nine_sig_signal(api, force_execute=False):
         return error_msg
 
 
-# Function to calculate 200-SMA using Alpaca with Firestore caching
-def calculate_200sma(symbol):
+# Unified function to fetch all market data and calculate all SMAs at once
+def update_market_data(symbol):
     """
-    Calculate 200-day SMA with Firestore caching using Alpaca IEX feed.
-    Cache is shared across all Cloud Functions and expires after 5 minutes.
-    Raises ValueError if Alpaca fails (no fallback).
+    Fetch fresh market data from Alpaca and calculate ALL metrics in one operation.
+    ALWAYS calculates and saves: price, sma200, sma255, sma200_state, sma255_state.
+    This ensures complete consistency across all symbols and makes the system extensible.
     
     Args:
         symbol: Stock symbol (e.g., "SPY", "URTH")
     
     Returns:
-        200-day SMA value
+        dict with keys: price, sma200, sma255, sma200_state, sma255_state, timestamp
     """
-    # Check Firestore cache first
-    cached_value = get_cached_market_data(symbol, "sma200")
-    if cached_value is not None:
-        print(f"Using cached 200-SMA for {symbol}: {cached_value:.2f}")
-        return cached_value
-    
-    # Fetch from Alpaca
-    print(f"Fetching fresh 200-SMA for {symbol} from Alpaca IEX feed")
+    print(f"Fetching fresh market data for {symbol} from Alpaca IEX feed")
     
     # Get API credentials
     api = set_alpaca_environment(env=alpaca_environment)
     
-    # Try Alpaca first
-    closes = get_alpaca_historical_bars(api, symbol, days=400)
-    
-    if closes and len(closes) >= 200:
-        # Calculate SMA from Alpaca data
-        df = pd.DataFrame({'close': closes})
-        sma_200 = df['close'].rolling(window=200).mean().iloc[-1]
-        
-        # Cache the result in Firestore
-        set_cached_market_data(symbol, "sma200", float(sma_200))
-        
-        return float(sma_200)
-    else:
-        # No fallback - raise error if Alpaca fails
-        raise ValueError(f"Failed to fetch sufficient data for {symbol} 200-day SMA from Alpaca. Got {len(closes) if closes else 0} bars, need at least 200.")
-
-
-# Function to calculate 255-SMA using Alpaca with Firestore caching
-def calculate_255sma(symbol):
-    """
-    Calculate 255-day SMA with Firestore caching using Alpaca IEX feed.
-    Cache is shared across all Cloud Functions and expires after 5 minutes.
-    
-    Args:
-        symbol: Stock symbol (e.g., "SPY", "URTH")
-    
-    Returns:
-        255-day SMA value
-    """
-    # Check Firestore cache first
-    cached_value = get_cached_market_data(symbol, "sma255")
-    if cached_value is not None:
-        print(f"Using cached 255-SMA for {symbol}: {cached_value:.2f}")
-        return cached_value
-    
-    # Fetch from Alpaca
-    print(f"Fetching fresh 255-SMA for {symbol} from Alpaca IEX feed")
-    
-    # Get API credentials
-    api = set_alpaca_environment(env=alpaca_environment)
-    
-    # Fetch historical data (need more days for 255-day SMA)
+    # Fetch historical data (500 days covers both 200 and 255-day SMAs)
     closes = get_alpaca_historical_bars(api, symbol, days=500)
     
-    if closes and len(closes) >= 255:
-        # Calculate SMA from Alpaca data
-        df = pd.DataFrame({'close': closes})
-        sma_255 = df['close'].rolling(window=255).mean().iloc[-1]
-        
-        # Cache the result in Firestore
-        set_cached_market_data(symbol, "sma255", float(sma_255))
-        
-        return float(sma_255)
+    if not closes or len(closes) < 255:
+        raise ValueError(f"Insufficient Alpaca data for {symbol}. Got {len(closes) if closes else 0} bars, need at least 255.")
+    
+    # Get current price from latest trade
+    current_price = get_latest_trade(api, symbol)
+    
+    # Calculate both SMAs from same dataset
+    df = pd.DataFrame({'close': closes})
+    sma_200 = df['close'].rolling(window=200).mean().iloc[-1]
+    sma_255 = df['close'].rolling(window=255).mean().iloc[-1]
+    
+    # Calculate states for both SMA periods
+    # Using 1% noise threshold (matches default in alert system)
+    noise_threshold_pct = 1.0  # 1% threshold to avoid noise (as percentage)
+    
+    # 200-day state
+    diff_200_pct = ((current_price - sma_200) / sma_200) * 100
+    if diff_200_pct > noise_threshold_pct:
+        sma200_state = "above"
+    elif diff_200_pct < -noise_threshold_pct:
+        sma200_state = "below"
     else:
-        # No fallback - raise error if Alpaca fails
-        raise ValueError(f"Failed to fetch sufficient data for {symbol} 255-day SMA from Alpaca. Got {len(closes) if closes else 0} bars, need at least 255.")
-
-
-# Function to get latest price using Alpaca with Firestore caching
-def get_latest_price(symbol):
-    """
-    Get latest price with Firestore caching using Alpaca.
-    Cache is shared across all Cloud Functions and expires after 5 minutes.
+        sma200_state = "neutral"
     
-    Args:
-        symbol: Stock symbol (e.g., "SPY", "URTH")
+    # 255-day state
+    diff_255_pct = ((current_price - sma_255) / sma_255) * 100
+    if diff_255_pct > noise_threshold_pct:
+        sma255_state = "above"
+    elif diff_255_pct < -noise_threshold_pct:
+        sma255_state = "below"
+    else:
+        sma255_state = "neutral"
     
-    Returns:
-        Current price
-    """
-    # Check Firestore cache first
-    cached_value = get_cached_market_data(symbol, "price")
-    if cached_value is not None:
-        print(f"Using cached price for {symbol}: ${cached_value:.2f}")
-        return cached_value
+    # Prepare complete market data
+    market_data = {
+        "symbol": symbol,
+        "price": float(current_price),
+        "sma200": float(sma_200),
+        "sma255": float(sma_255),
+        "sma200_state": sma200_state,
+        "sma255_state": sma255_state,
+        "timestamp": datetime.datetime.utcnow()
+    }
     
-    # Fetch from Alpaca
-    print(f"Fetching fresh price for {symbol} from Alpaca")
+    # Save everything to Firestore at once
+    doc_id = symbol.replace("^", "").replace(".", "_")
+    doc_ref = get_firestore_client().collection("market-data").document(doc_id)
     
-    # Get API credentials
-    api = set_alpaca_environment(env=alpaca_environment)
+    # Get existing data (to preserve alert tracking fields)
+    doc = doc_ref.get()
+    if doc.exists:
+        existing_data = doc.to_dict()
+        # Preserve alert date fields if they exist
+        for field in ['sma200_last_hour_alert_date', 'sma255_last_hour_alert_date']:
+            if field in existing_data:
+                market_data[field] = existing_data[field]
     
-    # Use existing get_latest_trade function (already uses Alpaca)
-    price = get_latest_trade(api, symbol)
+    # Write complete data
+    doc_ref.set(market_data)
     
-    # Cache the result in Firestore
-    set_cached_market_data(symbol, "price", price)
+    print(f"Updated {symbol}: Price=${market_data['price']:.2f}, SMA200=${market_data['sma200']:.2f} ({sma200_state}), SMA255=${market_data['sma255']:.2f} ({sma255_state})")
     
-    return price
+    return market_data
 
 
 def check_trading_day(mode="daily"):
@@ -1489,8 +1521,13 @@ def monthly_buying_sma(api, symbol, force_execute=False, investment_calc=None, m
 
     # Get symbol-specific parameters (use SPY as S&P 500 proxy for SPXL decisions)
     if symbol == "SPXL":
-        sma_200 = calculate_200sma("SPY")
-        latest_price = get_latest_price("SPY")
+        # Get all SPY market data at once (efficient single fetch/read)
+        spy_data = get_all_market_data("SPY")
+        if spy_data is None:
+            spy_data = update_market_data("SPY")
+        
+        sma_200 = spy_data["sma200"]
+        latest_price = spy_data["price"]
     else:
         return f"Unknown symbol: {symbol}"
 
@@ -1593,8 +1630,13 @@ def daily_trade_sma(api, symbol):
 
     # Use SPY as S&P 500 proxy for SPXL trading decisions
     if symbol == "SPXL":
-        sma_200 = calculate_200sma("SPY")
-        latest_price = get_latest_price("SPY")
+        # Get all SPY market data at once (efficient single fetch/read)
+        spy_data = get_all_market_data("SPY")
+        if spy_data is None:
+            spy_data = update_market_data("SPY")
+        
+        sma_200 = spy_data["sma200"]
+        latest_price = spy_data["price"]
     else:
         return f"Unknown symbol: {symbol}"
 
@@ -1870,14 +1912,15 @@ def get_index_sma_state(index_symbol, sma_period):
 def save_index_sma_state(index_symbol, sma_period, state, price, sma_value):
     """
     Save the current SMA state for an index to Firestore.
-    Updates the unified market-data document with current price, SMA value, and state.
+    Note: update_market_data() now handles price/SMA/state updates automatically.
+    This function is kept for backward compatibility with alert system.
     
     Args:
         index_symbol: Market symbol
         sma_period: SMA period
         state: Current state ("above", "below", or "neutral")
-        price: Current price
-        sma_value: Current SMA value
+        price: Current price (ignored - preserved from update_market_data)
+        sma_value: Current SMA value (ignored - preserved from update_market_data)
     """
     try:
         # Normalize symbol for Firestore document ID
@@ -1885,16 +1928,15 @@ def save_index_sma_state(index_symbol, sma_period, state, price, sma_value):
         
         doc_ref = get_firestore_client().collection("market-data").document(doc_id)
         
-        # Get existing data or create new
+        # Get existing data
         doc = doc_ref.get()
-        if doc.exists:
-            data = doc.to_dict()
-        else:
-            data = {"symbol": index_symbol}
+        if not doc.exists:
+            print(f"Warning: No market data exists for {index_symbol}. Call update_market_data() first.")
+            return
         
-        # Update price, SMA value, state, and timestamp
-        data["price"] = price
-        data[f"sma{sma_period}"] = sma_value
+        data = doc.to_dict()
+        
+        # Only update the specific state field (price and SMA already set by update_market_data)
         data[f"sma{sma_period}_state"] = state
         data["timestamp"] = datetime.datetime.utcnow()
         
@@ -2075,13 +2117,18 @@ def check_unified_index_alert(request):
                 
         elif alert_type == "sma_crossing":
             # Handle SMA crossing alerts with crossover detection
-            current_price = get_latest_price(index_symbol)
+            # Get all market data at once for efficiency
+            market_data = get_all_market_data(index_symbol)
+            if market_data is None:
+                market_data = update_market_data(index_symbol)
             
-            # Calculate appropriate SMA based on period
+            current_price = market_data["price"]
+            
+            # Get appropriate SMA based on period
             if sma_period == 255:
-                sma_value = calculate_255sma(index_symbol)
+                sma_value = market_data["sma255"]
             elif sma_period == 200:
-                sma_value = calculate_200sma(index_symbol)
+                sma_value = market_data["sma200"]
             else:
                 # For any other period, calculate dynamically using Alpaca
                 api = set_alpaca_environment(env=alpaca_environment)
