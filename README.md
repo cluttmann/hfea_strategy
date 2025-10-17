@@ -172,7 +172,7 @@ The project includes a unified index alert system that monitors multiple indices
 
 #### **2. SMA Crossing Alerts**
 - **URTH 255-day SMA**: Monitors iShares MSCI World ETF crossing above/below 255-day SMA
-- **S&P 500 200-day SMA**: Monitors S&P 500 Index crossing above/below 200-day SMA
+- **SPY 200-day SMA**: Monitors SPY (S&P 500 ETF) crossing above/below 200-day SMA
 - **Schedule**: Every hour during trading hours (9:15 AM - 3:15 PM)
 - **Purpose**: Track trend changes and potential market direction shifts
 
@@ -187,8 +187,8 @@ The project includes a unified index alert system that monitors multiple indices
 🚀 URTH Alert: iShares MSCI World ETF crossed ABOVE its 255-day SMA! 
 Current: $180.50 (SMA: $178.20, +1.29%)
 
-📉 S&P 500 Index Alert: Crossed BELOW its 200-day SMA! 
-Current: $4,320.15 (SMA: $4,380.50, -1.38%)
+📉 SPY Alert: Crossed BELOW its 200-day SMA! 
+Current: $432.15 (SMA: $438.50, -1.38%)
 
 Alert: S&P 500 has dropped 32.15% from its ATH! 
 Consider a loan with a duration of 6 to 8 years (50k to 100k) at around 4.5% interest max
@@ -201,8 +201,9 @@ Consider a loan with a duration of 6 to 8 years (50k to 100k) at around 4.5% int
   - **SPXL SMA strategy**: Trend-following with 200-day SMA (monthly buys and daily trading)
   - **9-Sig strategy**: Jason Kelly methodology with monthly AGG contributions and quarterly TQQQ/AGG signals with crash protection
   - **Unified index alert system**: Monitors multiple indices for ATH drops and SMA crossings
-  - **Firestore integration**: Persistent storage for 9-Sig quarterly data and strategy balances
-- `requirements.txt`: Python dependencies including yfinance, Google Cloud libraries, and Flask.
+  - **Firestore integration**: Persistent storage for 9-Sig quarterly data, strategy balances, and unified market data cache
+  - **Alpaca integration**: All market data fetched from Alpaca IEX feed (no yfinance dependency)
+- `requirements.txt`: Python dependencies including pandas, Google Cloud libraries, and Flask.
 - `cloudbuild.yaml`: Google Cloud Build configuration for deploying Cloud Functions and Cloud Scheduler jobs.
 - `README.md`: Comprehensive documentation of all strategies and setup instructions.
 
@@ -284,8 +285,9 @@ The system includes intelligent margin control for all monthly investment functi
 Margin is enabled ONLY when all four conditions are met:
 
 #### Gate 1: Market Trend
-- **Requirement**: S&P 500 > 200-day SMA
+- **Requirement**: SPY > 200-day SMA
 - **Rationale**: Only use leverage in confirmed bull markets
+- **Note**: Uses SPY (S&P 500 ETF) as S&P 500 Index proxy
 
 #### Gate 2: Margin Rate
 - **Requirement**: Borrowing cost ≤ 8.0%
@@ -344,7 +346,7 @@ Each monthly investment cycle generates ONE consolidated message per strategy:
 ```
 📊 [Strategy Name] Monthly Update
 
-Market Trend: ✅ SPX $5,850.00 (200-SMA: $5,500.00)
+Market Trend: ✅ SPY $585.00 (200-SMA: $550.00)
 Margin Rate: ✅ 6.5% (FRED 4.0% + 2.5%)
 Buffer: ✅ 8.2%
 Leverage: ✅ 1.05x
@@ -398,7 +400,7 @@ margin_control_config = {
 - Portfolio allocation: 47.5% of total monthly investment
 - SMA period: 200 days
 - Margin band: 1% (to avoid whipsaws)
-- Tracked index: S&P 500 (^GSPC)
+- Tracked index: S&P 500 (SPY ETF as proxy)
 
 **9-Sig Strategy:**
 - Portfolio allocation: 5% of total monthly investment
@@ -420,11 +422,14 @@ margin_control_config = {
   - `strategy-balances`: Tracks invested amounts for each strategy
   - `nine-sig-quarters`: Historical quarterly data for 9-Sig signal calculations
   - `nine-sig-monthly-contributions`: Tracks actual monthly 9-Sig contributions for accurate quarterly signal calculation
-  - `market-data-cache`: Caches market prices and SMA values (5-minute expiry) to avoid yfinance rate limits
+  - `market-data`: Unified collection caching market prices, SMA values (200-day, 255-day), crossing states, and alert timestamps (5-minute cache expiry) - single source of truth for all market data
 
 ### **Trading Platform:**
 - **Alpaca API**: Live and paper trading environments supported
 - **Order execution**: Market orders with fill-wait logic (5-minute polling, 300-second timeout)
+- **Market Data**: Uses SPY (S&P 500 ETF) as proxy for S&P 500 Index - tracks with <0.1% difference
+- **Data Source**: Alpaca IEX feed (included with Basic subscription) - no rate limiting, 5 years of historical data
+- **Caching**: 5-minute Firestore cache for all price and SMA data to minimize API calls
 
 ## Setup
 

@@ -2,7 +2,7 @@ functions-framework==3.*
 Flask==2.3.2  # For handling HTTP requests in Cloud Functions
 google-cloud-secret-manager==2.7.2
 python-dotenv==1.0.0
-yfinance==0.2.61
 requests
 pandas-market-calendars
 google-cloud-firestore
+pandas  # For SMA calculations from Alpaca data

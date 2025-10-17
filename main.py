@@ -2,10 +2,10 @@ import os
 from flask import Flask, jsonify
 from google.cloud import secretmanager
 from dotenv import load_dotenv
-import yfinance as yf
 import requests
 import json
 import time
+import pandas as pd
 import pandas_market_calendars as mcal
 import datetime
 from google.cloud import firestore
@@ -85,12 +85,12 @@ CACHE_DURATION_MINUTES = 5  # Cache freshness window
 
 def get_cached_market_data(symbol, data_type):
     """
-    Get cached market data from Firestore to avoid yfinance rate limiting.
+    Get cached market data from Firestore to avoid redundant Alpaca API calls.
     Cache expires after 5 minutes. Works across all Cloud Functions.
     
     Args:
         symbol: Market symbol (e.g., "^GSPC", "EEM", "EFA")
-        data_type: "price" or "sma200"
+        data_type: "price", "sma200", or "sma255"
     
     Returns:
         Cached value or None if not cached/expired/unavailable
@@ -99,7 +99,7 @@ def get_cached_market_data(symbol, data_type):
         # Normalize symbol for Firestore document ID (remove special chars)
         doc_id = symbol.replace("^", "").replace(".", "_")
         
-        doc_ref = get_firestore_client().collection("market-data-cache").document(doc_id)
+        doc_ref = get_firestore_client().collection("market-data").document(doc_id)
         doc = doc_ref.get()
         
         if not doc.exists:
@@ -130,19 +130,19 @@ def get_cached_market_data(symbol, data_type):
 
 def set_cached_market_data(symbol, data_type, value):
     """
-    Cache market data to Firestore to avoid redundant yfinance API calls.
+    Cache market data to Firestore to avoid redundant Alpaca API calls.
     Accessible across all Cloud Functions. Automatically expires after 5 minutes.
     
     Args:
         symbol: Market symbol
-        data_type: "price" or "sma200"
+        data_type: "price", "sma200", or "sma255"
         value: Data value to cache
     """
     try:
         # Normalize symbol for Firestore document ID (remove special chars)
         doc_id = symbol.replace("^", "").replace(".", "_")
         
-        doc_ref = get_firestore_client().collection("market-data-cache").document(doc_id)
+        doc_ref = get_firestore_client().collection("market-data").document(doc_id)
         
         # Get existing data or create new
         doc = doc_ref.get()
@@ -167,21 +167,77 @@ def get_auth_headers(api):
         "APCA-API-SECRET-KEY": api["SECRET_KEY"],
     }
 
+
+def get_alpaca_historical_bars(api, symbol, days=400):
+    """
+    Fetch historical daily bars from Alpaca using IEX feed.
+    Primary data source for all SMA calculations (no rate limiting).
+    
+    Args:
+        api: Alpaca API credentials dict
+        symbol: Stock symbol (e.g., "SPY", "URTH")
+        days: Number of calendar days of history to fetch (default 400 for 200-day SMA)
+    
+    Returns:
+        List of closing prices (most recent last), or None on error
+    """
+    try:
+        from datetime import datetime, timedelta
+        
+        market_data_base_url = "https://data.alpaca.markets"
+        
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+        
+        url = f"{market_data_base_url}/v2/stocks/{symbol}/bars"
+        params = {
+            "start": start_date.strftime("%Y-%m-%d"),
+            "end": end_date.strftime("%Y-%m-%d"),
+            "timeframe": "1Day",
+            "limit": 10000,
+            "adjustment": "split",
+            "feed": "iex"  # Use IEX feed (included with Basic subscription)
+        }
+        
+        response = requests.get(url, headers=get_auth_headers(api), params=params)
+        response.raise_for_status()
+        
+        data = response.json()
+        bars = data.get("bars", [])
+        
+        if not bars:
+            print(f"No Alpaca bars returned for {symbol}")
+            return None
+        
+        # Extract closing prices
+        closes = [bar['c'] for bar in bars]
+        print(f"Fetched {len(closes)} bars for {symbol} from Alpaca IEX feed")
+        return closes
+        
+    except Exception as e:
+        print(f"Alpaca historical fetch failed for {symbol}: {e}")
+        return None
+
+
 def get_latest_trade(api, symbol):
+    """
+    Get latest trade price from Alpaca.
+    No fallback - raises error if Alpaca data unavailable.
+    
+    Args:
+        api: Alpaca API credentials dict
+        symbol: Stock symbol
+    
+    Returns:
+        Latest trade price
+    """
     symbol = symbol.upper()
     market_data_base_url = "https://data.alpaca.markets"
     url = f"{market_data_base_url}/v2/stocks/{symbol}/trades/latest"
-    try:
-        response = requests.get(url, headers=get_auth_headers(api))
-        response.raise_for_status()
-        return response.json()["trade"]["p"]
-    except requests.exceptions.HTTPError:
-        if response.status_code == 404:
-            print(f"Alpaca data not available for {symbol}, falling back to yfinance.")
-            price = yf.Ticker(symbol).history(period="1d")["Close"].iloc[-1]
-            return round(price, 2)
-        else:
-            raise
+    
+    response = requests.get(url, headers=get_auth_headers(api))
+    response.raise_for_status()
+    return response.json()["trade"]["p"]
 
 def get_account_cash(api):
     url = f"{api['BASE_URL']}/v2/account"
@@ -398,13 +454,13 @@ def check_margin_conditions(api):
     }
     
     try:
-        # Gate 1: Market Trend (SPX > 200-SMA)
+        # Gate 1: Market Trend (SPY > 200-SMA as S&P 500 proxy)
         try:
-            spx_price = get_latest_price("^GSPC")
-            spx_sma = calculate_200sma("^GSPC")
-            result["metrics"]["spx_price"] = spx_price
-            result["metrics"]["spx_sma"] = spx_sma
-            result["gate_results"]["market_trend"] = spx_price > spx_sma
+            spy_price = get_latest_price("SPY")
+            spy_sma = calculate_200sma("SPY")
+            result["metrics"]["spx_price"] = spy_price  # Keep key name for compatibility
+            result["metrics"]["spx_sma"] = spy_sma
+            result["gate_results"]["market_trend"] = spy_price > spy_sma
         except Exception as e:
             result["errors"].append(f"Market trend check failed: {e}")
             return result
@@ -522,9 +578,9 @@ def calculate_monthly_investments(api, margin_result):
     
     # Step 3 & 4: Check SMA status and subtract if bearish
     for symbol, firestore_key in [("SPXL", "SPXL_SMA")]:
-        # Determine which index to check
+        # Determine which index to check (use SPY as S&P 500 proxy)
         if symbol == "SPXL":
-            index_symbol = "^GSPC"
+            index_symbol = "SPY"
         else:
             continue
         
@@ -681,22 +737,50 @@ def get_quarterly_nine_sig_contributions():
 
 
 def check_spy_30_down_rule():
-    """Check if SPY has dropped 30% from all-time high"""
+    """
+    Check if SPY has dropped 30% from all-time high using Alpaca data.
+    Uses 2-year period to capture recent all-time highs and crashes.
+    """
     try:
-        # Get SPY data for 2-year period (avoids rate limits while capturing recent crashes)
-        spy = yf.download("SPY", period="2y")
+        # Get API credentials
+        api = set_alpaca_environment(env=alpaca_environment)
         
-        if len(spy) < 10:  # Need sufficient data
+        # Fetch 2 years of SPY data from Alpaca
+        from datetime import datetime, timedelta
+        
+        market_data_base_url = "https://data.alpaca.markets"
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=730)  # 2 years
+        
+        url = f"{market_data_base_url}/v2/stocks/SPY/bars"
+        params = {
+            "start": start_date.strftime("%Y-%m-%d"),
+            "end": end_date.strftime("%Y-%m-%d"),
+            "timeframe": "1Day",
+            "limit": 10000,
+            "adjustment": "split",
+            "feed": "iex"
+        }
+        
+        response = requests.get(url, headers=get_auth_headers(api), params=params)
+        response.raise_for_status()
+        
+        data = response.json()
+        bars = data.get("bars", [])
+        
+        if len(bars) < 10:  # Need sufficient data
+            print(f"Insufficient SPY data for 30-down rule: {len(bars)} bars")
             return False
-            
-        # Get all-time high from 2-year period
-        all_time_high = spy["High"].max()
-        current_close = spy["Close"].iloc[-1]
+        
+        # Get all-time high and current close from bars
+        all_time_high = max(bar['h'] for bar in bars)
+        current_close = bars[-1]['c']
         
         # Check if current is 30% below the all-time high
         drop_percentage = (all_time_high - current_close) / all_time_high
         
         return drop_percentage >= 0.30
+        
     except Exception as e:
         print(f"Error checking SPY 30 down rule: {e}")
         return False
@@ -1220,11 +1304,18 @@ def execute_quarterly_nine_sig_signal(api, force_execute=False):
         return error_msg
 
 
-# Function to calculate 200-SMA using yfinance with Firestore caching
+# Function to calculate 200-SMA using Alpaca with Firestore caching
 def calculate_200sma(symbol):
     """
-    Calculate 200-day SMA with Firestore caching to avoid yfinance rate limits.
+    Calculate 200-day SMA with Firestore caching using Alpaca IEX feed.
     Cache is shared across all Cloud Functions and expires after 5 minutes.
+    Raises ValueError if Alpaca fails (no fallback).
+    
+    Args:
+        symbol: Stock symbol (e.g., "SPY", "URTH")
+    
+    Returns:
+        200-day SMA value
     """
     # Check Firestore cache first
     cached_value = get_cached_market_data(symbol, "sma200")
@@ -1232,31 +1323,81 @@ def calculate_200sma(symbol):
         print(f"Using cached 200-SMA for {symbol}: {cached_value:.2f}")
         return cached_value
     
-    # Fetch from yfinance
-    print(f"Fetching fresh 200-SMA for {symbol} from yfinance")
-    data = yf.download(symbol, period="1y", interval="1d")
-    sma_200 = data["Close"].rolling(window=200).mean().iloc[-1].item()
+    # Fetch from Alpaca
+    print(f"Fetching fresh 200-SMA for {symbol} from Alpaca IEX feed")
     
-    # Cache the result in Firestore
-    set_cached_market_data(symbol, "sma200", sma_200)
+    # Get API credentials
+    api = set_alpaca_environment(env=alpaca_environment)
     
-    return sma_200
+    # Try Alpaca first
+    closes = get_alpaca_historical_bars(api, symbol, days=400)
+    
+    if closes and len(closes) >= 200:
+        # Calculate SMA from Alpaca data
+        df = pd.DataFrame({'close': closes})
+        sma_200 = df['close'].rolling(window=200).mean().iloc[-1]
+        
+        # Cache the result in Firestore
+        set_cached_market_data(symbol, "sma200", float(sma_200))
+        
+        return float(sma_200)
+    else:
+        # No fallback - raise error if Alpaca fails
+        raise ValueError(f"Failed to fetch sufficient data for {symbol} 200-day SMA from Alpaca. Got {len(closes) if closes else 0} bars, need at least 200.")
 
 
-# Function to calculate 255-SMA using yfinance
+# Function to calculate 255-SMA using Alpaca with Firestore caching
 def calculate_255sma(symbol):
-    """Calculate 255-day simple moving average for any symbol"""
-    # Download 2 years of daily data to ensure we have enough data for 255-day SMA
-    data = yf.download(symbol, period="2y", interval="1d")
-    sma_255 = data["Close"].rolling(window=255).mean().iloc[-1].item()
-    return sma_255
+    """
+    Calculate 255-day SMA with Firestore caching using Alpaca IEX feed.
+    Cache is shared across all Cloud Functions and expires after 5 minutes.
+    
+    Args:
+        symbol: Stock symbol (e.g., "SPY", "URTH")
+    
+    Returns:
+        255-day SMA value
+    """
+    # Check Firestore cache first
+    cached_value = get_cached_market_data(symbol, "sma255")
+    if cached_value is not None:
+        print(f"Using cached 255-SMA for {symbol}: {cached_value:.2f}")
+        return cached_value
+    
+    # Fetch from Alpaca
+    print(f"Fetching fresh 255-SMA for {symbol} from Alpaca IEX feed")
+    
+    # Get API credentials
+    api = set_alpaca_environment(env=alpaca_environment)
+    
+    # Fetch historical data (need more days for 255-day SMA)
+    closes = get_alpaca_historical_bars(api, symbol, days=500)
+    
+    if closes and len(closes) >= 255:
+        # Calculate SMA from Alpaca data
+        df = pd.DataFrame({'close': closes})
+        sma_255 = df['close'].rolling(window=255).mean().iloc[-1]
+        
+        # Cache the result in Firestore
+        set_cached_market_data(symbol, "sma255", float(sma_255))
+        
+        return float(sma_255)
+    else:
+        # No fallback - raise error if Alpaca fails
+        raise ValueError(f"Failed to fetch sufficient data for {symbol} 255-day SMA from Alpaca. Got {len(closes) if closes else 0} bars, need at least 255.")
 
 
-# Function to get latest price using yfinance with Firestore caching
+# Function to get latest price using Alpaca with Firestore caching
 def get_latest_price(symbol):
     """
-    Get latest price with Firestore caching to avoid yfinance rate limits.
+    Get latest price with Firestore caching using Alpaca.
     Cache is shared across all Cloud Functions and expires after 5 minutes.
+    
+    Args:
+        symbol: Stock symbol (e.g., "SPY", "URTH")
+    
+    Returns:
+        Current price
     """
     # Check Firestore cache first
     cached_value = get_cached_market_data(symbol, "price")
@@ -1264,11 +1405,14 @@ def get_latest_price(symbol):
         print(f"Using cached price for {symbol}: ${cached_value:.2f}")
         return cached_value
     
-    # Fetch from yfinance
-    print(f"Fetching fresh price for {symbol} from yfinance")
-    ticker = yf.Ticker(symbol)
-    data = ticker.history(period="1d")
-    price = data["Close"].iloc[-1]
+    # Fetch from Alpaca
+    print(f"Fetching fresh price for {symbol} from Alpaca")
+    
+    # Get API credentials
+    api = set_alpaca_environment(env=alpaca_environment)
+    
+    # Use existing get_latest_trade function (already uses Alpaca)
+    price = get_latest_trade(api, symbol)
     
     # Cache the result in Firestore
     set_cached_market_data(symbol, "price", price)
@@ -1343,10 +1487,10 @@ def monthly_buying_sma(api, symbol, force_execute=False, investment_calc=None, m
         print(f"{symbol} SMA: Force execution enabled - bypassing trading day check")
         send_telegram_message(f"{symbol} SMA: Force execution enabled for testing - bypassing trading day check")
 
-    # Get symbol-specific parameters
+    # Get symbol-specific parameters (use SPY as S&P 500 proxy for SPXL decisions)
     if symbol == "SPXL":
-        sma_200 = calculate_200sma("^GSPC")
-        latest_price = get_latest_price("^GSPC")
+        sma_200 = calculate_200sma("SPY")
+        latest_price = get_latest_price("SPY")
     else:
         return f"Unknown symbol: {symbol}"
 
@@ -1447,9 +1591,10 @@ def daily_trade_sma(api, symbol):
         send_telegram_message(f"Market closed today. Skipping 200SMA. for {symbol}")
         return "Market closed today."
 
+    # Use SPY as S&P 500 proxy for SPXL trading decisions
     if symbol == "SPXL":
-        sma_200 = calculate_200sma("^GSPC")
-        latest_price = get_latest_price("^GSPC")
+        sma_200 = calculate_200sma("SPY")
+        latest_price = get_latest_price("SPY")
     else:
         return f"Unknown symbol: {symbol}"
 
@@ -1630,17 +1775,55 @@ def get_chat_title():
 
 
 def get_index_data(index_symbol):
-    """Fetch the all-time high and current price for an index."""
-    # Download historical data for the index
-    data = yf.download(index_symbol, period="max")
-
-    # Get the all-time high
-    all_time_high = data["High"].max().item()
-
-    # Get the current price (latest close price)
-    current_price = data["Close"].iloc[-1].item()
-
-    return current_price, all_time_high
+    """
+    Fetch the all-time high and current price for an index using Alpaca.
+    Uses 5 years of data (maximum available with Basic subscription).
+    
+    Args:
+        index_symbol: Stock symbol (e.g., "SPY", "URTH")
+    
+    Returns:
+        tuple: (current_price, all_time_high)
+    """
+    try:
+        # Get API credentials
+        api = set_alpaca_environment(env=alpaca_environment)
+        
+        # Fetch 5 years of data from Alpaca (max available with Basic plan)
+        from datetime import datetime, timedelta
+        
+        market_data_base_url = "https://data.alpaca.markets"
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=1825)  # 5 years
+        
+        url = f"{market_data_base_url}/v2/stocks/{index_symbol}/bars"
+        params = {
+            "start": start_date.strftime("%Y-%m-%d"),
+            "end": end_date.strftime("%Y-%m-%d"),
+            "timeframe": "1Day",
+            "limit": 10000,
+            "adjustment": "split",
+            "feed": "iex"
+        }
+        
+        response = requests.get(url, headers=get_auth_headers(api), params=params)
+        response.raise_for_status()
+        
+        data = response.json()
+        bars = data.get("bars", [])
+        
+        if not bars:
+            raise ValueError(f"No Alpaca data returned for {index_symbol}")
+        
+        # Get all-time high and current close from bars
+        all_time_high = max(bar['h'] for bar in bars)
+        current_price = bars[-1]['c']
+        
+        return current_price, all_time_high
+        
+    except Exception as e:
+        print(f"Error fetching index data for {index_symbol}: {e}")
+        raise
 
 
 def get_index_sma_state(index_symbol, sma_period):
@@ -1652,20 +1835,32 @@ def get_index_sma_state(index_symbol, sma_period):
         sma_period: SMA period (e.g., 200, 255)
     
     Returns:
-        dict with keys: state, last_checked, last_price, last_sma
+        dict with keys: state, timestamp
         Returns None if no previous state exists
     """
     try:
         # Normalize symbol for Firestore document ID
-        doc_id = f"{index_symbol.replace('^', '').replace('.', '_')}_{sma_period}"
+        doc_id = index_symbol.replace("^", "").replace(".", "_")
         
-        doc_ref = get_firestore_client().collection("index-sma-states").document(doc_id)
+        doc_ref = get_firestore_client().collection("market-data").document(doc_id)
         doc = doc_ref.get()
         
         if not doc.exists:
             return None
         
-        return doc.to_dict()
+        data = doc.to_dict()
+        
+        # Extract the state field for this SMA period
+        state_field = f"sma{sma_period}_state"
+        state = data.get(state_field)
+        
+        if state is None:
+            return None
+        
+        return {
+            "state": state,
+            "timestamp": data.get("timestamp")
+        }
         
     except Exception as e:
         print(f"Warning: Could not load SMA state for {index_symbol}: {e}")
@@ -1675,6 +1870,7 @@ def get_index_sma_state(index_symbol, sma_period):
 def save_index_sma_state(index_symbol, sma_period, state, price, sma_value):
     """
     Save the current SMA state for an index to Firestore.
+    Updates the unified market-data document with current price, SMA value, and state.
     
     Args:
         index_symbol: Market symbol
@@ -1685,18 +1881,24 @@ def save_index_sma_state(index_symbol, sma_period, state, price, sma_value):
     """
     try:
         # Normalize symbol for Firestore document ID
-        doc_id = f"{index_symbol.replace('^', '').replace('.', '_')}_{sma_period}"
+        doc_id = index_symbol.replace("^", "").replace(".", "_")
         
-        doc_ref = get_firestore_client().collection("index-sma-states").document(doc_id)
-        doc_ref.set({
-            "index_symbol": index_symbol,
-            "sma_period": sma_period,
-            "state": state,
-            "last_price": price,
-            "last_sma": sma_value,
-            "last_checked": datetime.datetime.utcnow(),
-            "timestamp": datetime.datetime.utcnow()
-        })
+        doc_ref = get_firestore_client().collection("market-data").document(doc_id)
+        
+        # Get existing data or create new
+        doc = doc_ref.get()
+        if doc.exists:
+            data = doc.to_dict()
+        else:
+            data = {"symbol": index_symbol}
+        
+        # Update price, SMA value, state, and timestamp
+        data["price"] = price
+        data[f"sma{sma_period}"] = sma_value
+        data[f"sma{sma_period}_state"] = state
+        data["timestamp"] = datetime.datetime.utcnow()
+        
+        doc_ref.set(data)
         
     except Exception as e:
         print(f"Warning: Could not save SMA state for {index_symbol}: {e}")
@@ -1758,16 +1960,19 @@ def was_last_hour_alert_sent_today(index_symbol, sma_period):
     """
     try:
         # Normalize symbol for Firestore document ID
-        doc_id = f"{index_symbol.replace('^', '').replace('.', '_')}_{sma_period}_last_hour"
+        doc_id = index_symbol.replace("^", "").replace(".", "_")
         
-        doc_ref = get_firestore_client().collection("index-last-hour-alerts").document(doc_id)
+        doc_ref = get_firestore_client().collection("market-data").document(doc_id)
         doc = doc_ref.get()
         
         if not doc.exists:
             return False
         
         data = doc.to_dict()
-        last_alert_date = data.get("alert_date")
+        
+        # Get the last hour alert date field for this SMA period
+        alert_date_field = f"sma{sma_period}_last_hour_alert_date"
+        last_alert_date = data.get(alert_date_field)
         
         if not last_alert_date:
             return False
@@ -1791,6 +1996,7 @@ def was_last_hour_alert_sent_today(index_symbol, sma_period):
 def mark_last_hour_alert_sent(index_symbol, sma_period):
     """
     Mark that a last-hour confirmation alert was sent today.
+    Updates the unified market-data document with the alert date.
     
     Args:
         index_symbol: Market symbol
@@ -1798,15 +2004,23 @@ def mark_last_hour_alert_sent(index_symbol, sma_period):
     """
     try:
         # Normalize symbol for Firestore document ID
-        doc_id = f"{index_symbol.replace('^', '').replace('.', '_')}_{sma_period}_last_hour"
+        doc_id = index_symbol.replace("^", "").replace(".", "_")
         
-        doc_ref = get_firestore_client().collection("index-last-hour-alerts").document(doc_id)
-        doc_ref.set({
-            "index_symbol": index_symbol,
-            "sma_period": sma_period,
-            "alert_date": datetime.datetime.now().date().isoformat(),
-            "timestamp": datetime.datetime.utcnow()
-        })
+        doc_ref = get_firestore_client().collection("market-data").document(doc_id)
+        
+        # Get existing data or create new
+        doc = doc_ref.get()
+        if doc.exists:
+            data = doc.to_dict()
+        else:
+            data = {"symbol": index_symbol}
+        
+        # Update the last hour alert date field for this SMA period
+        alert_date_field = f"sma{sma_period}_last_hour_alert_date"
+        data[alert_date_field] = datetime.datetime.now().date().isoformat()
+        data["timestamp"] = datetime.datetime.utcnow()
+        
+        doc_ref.set(data)
         
     except Exception as e:
         print(f"Warning: Could not mark last hour alert as sent: {e}")
@@ -1869,9 +2083,18 @@ def check_unified_index_alert(request):
             elif sma_period == 200:
                 sma_value = calculate_200sma(index_symbol)
             else:
-                # For any other period, calculate dynamically
-                data = yf.download(index_symbol, period="2y", interval="1d")
-                sma_value = data["Close"].rolling(window=sma_period).mean().iloc[-1].item()
+                # For any other period, calculate dynamically using Alpaca
+                api = set_alpaca_environment(env=alpaca_environment)
+                
+                # Fetch enough data for custom SMA period (add 50% buffer)
+                days_needed = int(sma_period * 1.5 * 1.4)  # trading days to calendar days with buffer
+                closes = get_alpaca_historical_bars(api, index_symbol, days=days_needed)
+                
+                if closes and len(closes) >= sma_period:
+                    df = pd.DataFrame({'close': closes})
+                    sma_value = df['close'].rolling(window=sma_period).mean().iloc[-1]
+                else:
+                    raise ValueError(f"Insufficient Alpaca data for {index_symbol} {sma_period}-day SMA. Got {len(closes) if closes else 0} bars, need {sma_period}.")
             
             # Calculate percentage difference from SMA
             price_diff_percent = ((current_price - sma_value) / sma_value) * 100
