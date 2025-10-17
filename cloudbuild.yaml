@@ -206,7 +206,7 @@ steps:
           --time-zone='America/New_York' \
           --location='europe-west3' \
           --oidc-service-account-email='1098661711782-compute@developer.gserviceaccount.com' \
-          --message-body='{"index_symbol": "^SPX", "index_name": "S&P 500", "alert_type": "ath_drop", "threshold_percent": 30.0}' \
+          --message-body='{"index_symbol": "SPY", "index_name": "S&P 500 (SPY)", "alert_type": "ath_drop", "threshold_percent": 30.0}' \
         || gcloud scheduler jobs create http sp500_drop_alert \
           --schedule='30 9-15 * * 1-5' \
           --uri='https://europe-west3-trading-436516.cloudfunctions.net/index_alert' \
@@ -214,7 +214,7 @@ steps:
           --time-zone='America/New_York' \
           --location='europe-west3' \
           --oidc-service-account-email='1098661711782-compute@developer.gserviceaccount.com' \
-          --message-body='{"index_symbol": "^SPX", "index_name": "S&P 500", "alert_type": "ath_drop", "threshold_percent": 30.0}'
+          --message-body='{"index_symbol": "SPY", "index_name": "S&P 500 (SPY)", "alert_type": "ath_drop", "threshold_percent": 30.0}'
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
   # Cloud Scheduler Job for MSCI World ATH Drop Alert
@@ -268,7 +268,7 @@ steps:
           --time-zone='America/New_York' \
           --location='europe-west3' \
           --oidc-service-account-email='1098661711782-compute@developer.gserviceaccount.com' \
-          --message-body='{"index_symbol": "^GSPC", "index_name": "S&P 500 Index", "alert_type": "sma_crossing", "sma_period": 200, "noise_threshold": 1.0}' \
+          --message-body='{"index_symbol": "SPY", "index_name": "S&P 500 (SPY)", "alert_type": "sma_crossing", "sma_period": 200, "noise_threshold": 1.0}' \
         || gcloud scheduler jobs create http spy_200sma_alert \
           --schedule='15 9-15 * * 1-5' \
           --uri='https://europe-west3-trading-436516.cloudfunctions.net/index_alert' \
@@ -276,7 +276,7 @@ steps:
           --time-zone='America/New_York' \
           --location='europe-west3' \
           --oidc-service-account-email='1098661711782-compute@developer.gserviceaccount.com' \
-          --message-body='{"index_symbol": "^GSPC", "index_name": "S&P 500 Index", "alert_type": "sma_crossing", "sma_period": 200, "noise_threshold": 1.0}'
+          --message-body='{"index_symbol": "SPY", "index_name": "S&P 500 (SPY)", "alert_type": "sma_crossing", "sma_period": 200, "noise_threshold": 1.0}'
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
 options:
