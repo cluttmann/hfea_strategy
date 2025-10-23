@@ -63,7 +63,7 @@ steps:
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
-  # Step 4b: Deploy the monthly_invest_all ORCHESTRATOR (runs all 3 monthly strategies)
+  # Step 4b: Deploy the monthly_invest_all ORCHESTRATOR (runs all 4 monthly strategies)
   - name: 'gcr.io/cloud-builders/gcloud'
     args:
     - functions
@@ -75,6 +75,38 @@ steps:
     - --runtime=python310
     - --timeout=540s
     - --entry-point=monthly_invest_all  # Entry point function in your Python code
+    - --memory=512MB
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
+
+  # Step 4c: Deploy the monthly_dual_momentum function
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - functions
+    - deploy
+    - monthly_dual_momentum  # Dual Momentum Strategy function
+    - --source=.
+    - --trigger-http
+    - --region=europe-west3
+    - --runtime=python310
+    - --timeout=540s
+    - --entry-point=monthly_dual_momentum  # Entry point function in your Python code
+    - --memory=512MB
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
+
+  # Step 4d: Deploy the monthly_sector_momentum function
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - functions
+    - deploy
+    - monthly_sector_momentum  # Sector Momentum Strategy function
+    - --source=.
+    - --trigger-http
+    - --region=europe-west3
+    - --runtime=python310
+    - --timeout=540s
+    - --entry-point=monthly_sector_momentum  # Entry point function in your Python code
     - --memory=512MB
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
@@ -128,7 +160,7 @@ steps:
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
 
-# Create Cloud Scheduler job for 'monthly_invest_all' ORCHESTRATOR (runs all 3 monthly strategies)
+# Create Cloud Scheduler job for 'monthly_invest_all' ORCHESTRATOR (runs all 4 monthly strategies)
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: 'bash'
     args:
@@ -163,7 +195,7 @@ steps:
     ]
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
-  # NOTE: monthly_buy_spxl, monthly_nine_sig_contributions, and monthly_buy_hfea schedulers
+  # NOTE: monthly_buy_spxl, monthly_nine_sig_contributions, monthly_buy_hfea, and monthly_dual_momentum schedulers
   # have been REPLACED by the monthly_invest_all orchestrator for coordinated budget management.
   # The individual functions are still deployed for manual/debugging use but not scheduled.
 

@@ -16,9 +16,11 @@ app = Flask(__name__)
 # Strategy allocation percentages for dynamic monthly investment calculation
 # Investment amounts are calculated dynamically each month based on available cash and margin
 strategy_allocations = {
-    "hfea_allo": 0.475,      # 47.5% to HFEA
-    "spxl_allo": 0.475,      # 47.5% to SPXL SMA
+    "hfea_allo": 0.375,      # 37.5% to HFEA (reduced from 42.5%)
+    "spxl_allo": 0.375,      # 37.5% to SPXL SMA (reduced from 42.5%)
     "nine_sig_allo": 0.05,   # 5% to 9-Sig strategy
+    "dual_momentum_allo": 0.10,  # 10% to Dual Momentum strategy
+    "sector_momentum_allo": 0.10,  # 10% to Sector Momentum strategy
 }
 
 # Strategy would be to allocate 50% to the SPXL SMA 200 Strategy and 50% to HFEA
@@ -53,6 +55,52 @@ margin_control_config = {
     "spread_above_35k": 0.01,       # +1.0% spread for accounts ≥$35k
     "portfolio_threshold": 35000,   # Threshold for spread calculation (in dollars)
     "min_investment": 1.00,         # Minimum investment amount (Alpaca requirement)
+}
+
+# Sector Momentum Strategy configuration
+sector_momentum_config = {
+    "sector_etfs": [
+        "XLK",   # Technology
+        "XLF",   # Financials
+        "XLE",   # Energy
+        "XLV",   # Healthcare
+        "XLI",   # Industrials
+        "XLP",   # Consumer Staples
+        "XLY",   # Consumer Discretionary
+        "XLU",   # Utilities
+        "XLB",   # Materials
+        "XLRE",  # Real Estate
+        "XLC"    # Communication Services
+    ],
+    "sector_names": {
+        "XLK": "Technology",
+        "XLF": "Financials", 
+        "XLE": "Energy",
+        "XLV": "Healthcare",
+        "XLI": "Industrials",
+        "XLP": "Consumer Staples",
+        "XLY": "Consumer Discretionary",
+        "XLU": "Utilities",
+        "XLB": "Materials",
+        "XLRE": "Real Estate",
+        "XLC": "Communication Services"
+    },
+    "bond_etf": "SCHZ",  # Bond ETF for bearish periods
+    "momentum_weights": {
+        "1_month": 0.40,   # 40% weight for 1-month momentum
+        "3_month": 0.20,   # 20% weight for 3-month momentum
+        "6_month": 0.20,   # 20% weight for 6-month momentum
+        "12_month": 0.20   # 20% weight for 12-month momentum
+    },
+    "lookback_periods": {
+        "1_month": 21,     # 21 trading days
+        "3_month": 63,     # 63 trading days
+        "6_month": 126,    # 126 trading days
+        "12_month": 252    # 252 trading days
+    },
+    "top_sectors_count": 3,         # Select top 3 sectors
+    "target_allocation_per_sector": 0.3333,  # 33.33% each
+    "spy_sma_period": 200,         # SPY 200-day SMA for trend filter
 }
 
 # Firestore client - initialized lazily to respect .env file
@@ -290,6 +338,37 @@ def get_latest_trade(api, symbol):
     response = requests.get(url, headers=get_auth_headers(api))
     response.raise_for_status()
     return response.json()["trade"]["p"]
+
+
+def get_sma(api, symbol, period):
+    """
+    Calculate Simple Moving Average for a symbol.
+    
+    Args:
+        api: Alpaca API credentials
+        symbol: Stock symbol (e.g., "SPY")
+        period: SMA period in days (e.g., 200)
+    
+    Returns:
+        float: SMA value or None if error
+    """
+    try:
+        # Get historical bars with extra buffer for IEX feed limitations
+        bars = get_alpaca_historical_bars(api, symbol, days=period + 100)  # Extra buffer for IEX feed
+        
+        if bars is None or len(bars) < period:
+            print(f"Insufficient data for {period}-day SMA calculation for {symbol}")
+            return None
+        
+        # Calculate SMA using the last 'period' bars
+        recent_bars = bars[-period:]
+        sma = sum(recent_bars) / len(recent_bars)
+        
+        return sma
+        
+    except Exception as e:
+        print(f"Error calculating {period}-day SMA for {symbol}: {e}")
+        return None
 
 def get_account_cash(api):
     url = f"{api['BASE_URL']}/v2/account"
@@ -596,7 +675,7 @@ def check_margin_conditions(api):
     return result
 
 
-def calculate_monthly_investments(api, margin_result):
+def calculate_monthly_investments(api, margin_result, env="live"):
     """
     Calculate dynamic monthly investment amounts based on available cash and margin.
     
@@ -630,7 +709,7 @@ def calculate_monthly_investments(api, margin_result):
     equity = metrics.get("equity", 0)
     
     # Step 2: Load Firestore reserved amounts
-    balances = load_balances()
+    balances = load_balances(env)
     reserved_amounts = {}
     
     # Step 3 & 4: Check SMA status and subtract if bearish
@@ -694,34 +773,51 @@ def calculate_monthly_investments(api, margin_result):
     }
 
 
-def save_balance(strategy, invested):
+def save_balance(strategy, data, env="live"):
     """
-    Save strategy balance to Firestore.
+    Save strategy balance to Firestore with environment separation.
     Handles Firestore unavailability gracefully for local testing.
+    
+    Args:
+        strategy: Strategy name (e.g., "dual_momentum")
+        data: Either a simple float (invested amount) or dict with multiple fields
+        env: Environment ("live" or "paper") - determines Firestore collection
     """
     try:
-        doc_ref = get_firestore_client().collection("strategy-balances").document(strategy)
-        doc_ref.set(
-            {
-                "invested": invested,
-            }
-        )
+        # Use environment-specific collection to separate paper/live data
+        collection_name = f"strategy-balances-{env}"
+        doc_ref = get_firestore_client().collection(collection_name).document(strategy)
+        
+        # Handle both simple float values and complex dictionaries
+        if isinstance(data, dict):
+            doc_ref.set(data)
+        else:
+            doc_ref.set({"invested": data})
+            
     except Exception as e:
-        print(f"Warning: Could not save balance to Firestore for {strategy}: {e}")
+        print(f"Warning: Could not save balance to Firestore for {strategy} ({env}): {e}")
 
 
-def load_balances():
+def load_balances(env="live"):
     """
-    Load strategy balances from Firestore.
+    Load strategy balances from Firestore with environment separation.
     Returns empty dict if Firestore is unavailable (local testing without proper config).
+    
+    Args:
+        env: Environment ("live" or "paper") - determines Firestore collection
+    
+    Returns:
+        dict: Strategy balances from the specified environment
     """
     balances = {}
     try:
-        docs = get_firestore_client().collection("strategy-balances").stream()
+        # Use environment-specific collection to separate paper/live data
+        collection_name = f"strategy-balances-{env}"
+        docs = get_firestore_client().collection(collection_name).stream()
         for doc in docs:
             balances[doc.id] = doc.to_dict()
     except Exception as e:
-        print(f"Warning: Could not load Firestore balances (local testing?): {e}")
+        print(f"Warning: Could not load Firestore balances ({env}) (local testing?): {e}")
         # Return empty dict for local testing without Firestore
     return balances
 
@@ -859,7 +955,7 @@ def count_ignored_sell_signals():
         return 0
 
 
-def make_monthly_nine_sig_contributions(api, force_execute=False, investment_calc=None, margin_result=None):
+def make_monthly_nine_sig_contributions(api, force_execute=False, investment_calc=None, margin_result=None, skip_order_wait=False, env="live"):
     """
     Monthly contributions go ONLY to AGG (bonds) - Following 3Sig Rule.
     Now includes margin-aware logic with dynamic investment amounts and All-or-Nothing approach.
@@ -883,7 +979,7 @@ def make_monthly_nine_sig_contributions(api, force_execute=False, investment_cal
         margin_result = check_margin_conditions(api)
     
     if investment_calc is None:
-        investment_calc = calculate_monthly_investments(api, margin_result)
+        investment_calc = calculate_monthly_investments(api, margin_result, env)
     
     investment_amount = investment_calc["strategy_amounts"]["nine_sig_allo"]
     
@@ -924,17 +1020,65 @@ def make_monthly_nine_sig_contributions(api, force_execute=False, investment_cal
         return action_taken
     
     # ALL monthly contributions go to AGG only (core 3Sig rule)
+    # Load current strategy state from Firestore
+    balances = load_balances(env)
+    nine_sig_data = balances.get("nine_sig", {})
+    total_invested = nine_sig_data.get("total_invested", 0)
+    current_agg_shares = nine_sig_data.get("current_agg_shares", 0)
+    
+    print(f"9-Sig Strategy - Investment: ${investment_amount:.2f}")
+    print(f"Current AGG shares: {current_agg_shares:.4f}")
+    print(f"Total invested: ${total_invested:.2f}")
+    
     try:
         agg_price = float(get_latest_trade(api, "AGG"))
         agg_shares_to_buy = investment_amount / agg_price
         
         if agg_shares_to_buy > 0:
             order = submit_order(api, "AGG", agg_shares_to_buy, "buy")
-            wait_for_order_fill(api, order["id"])
+            if not skip_order_wait:
+                wait_for_order_fill(api, order["id"])
+            
+            # Calculate new totals
+            new_total_agg_shares = current_agg_shares + agg_shares_to_buy
+            new_total_invested = total_invested + investment_amount
+            
             print(f"9-Sig: Bought {agg_shares_to_buy:.6f} shares of AGG (monthly contribution)")
+            
+            # Enhanced Telegram message with detailed decision rationale
+            telegram_msg = f"🎯 9-Sig Strategy Decision\n\n"
+            telegram_msg += f"📊 Monthly Contribution Analysis:\n"
+            telegram_msg += f"• Investment amount: ${investment_amount:.2f}\n"
+            telegram_msg += f"• Target asset: AGG (Bonds)\n"
+            telegram_msg += f"• AGG Price: ${agg_price:.2f}\n"
+            telegram_msg += f"• Shares bought: {agg_shares_to_buy:.4f}\n\n"
+            telegram_msg += f"🎯 Strategy Logic:\n"
+            telegram_msg += f"• Monthly contributions go ONLY to AGG (bonds)\n"
+            telegram_msg += f"• Following Jason Kelly's 3Sig methodology\n"
+            telegram_msg += f"• Quarterly signals determine TQQQ/AGG allocation\n"
+            telegram_msg += f"• Target allocation: 80% TQQQ, 20% AGG\n\n"
+            telegram_msg += f"⚡ Trade Execution Summary:\n"
+            telegram_msg += f"• Total AGG shares: {new_total_agg_shares:.4f}\n"
+            telegram_msg += f"• Total invested: ${new_total_invested:.2f}\n"
+            telegram_msg += f"• Monthly contribution tracked for quarterly signals"
+            
+            send_telegram_message(telegram_msg)
             
             # Track the actual contribution amount for quarterly signal calculation
             track_nine_sig_monthly_contribution(investment_amount)
+            
+            # Update Firestore with comprehensive tracking
+            save_balance("nine_sig", {
+                "total_invested": new_total_invested,
+                "current_agg_shares": new_total_agg_shares,
+                "last_trade_date": datetime.datetime.now().strftime("%Y-%m-%d"),
+                "last_monthly_contribution": {
+                    "amount": investment_amount,
+                    "agg_shares": agg_shares_to_buy,
+                    "agg_price": agg_price
+                },
+                "strategy_type": "monthly_contribution"
+            }, env)
             
             # Create action summary
             action_taken = f"Invested ${investment_amount:.2f} in AGG - {agg_shares_to_buy:.4f} shares"
@@ -949,7 +1093,7 @@ def make_monthly_nine_sig_contributions(api, force_execute=False, investment_cal
         return error_msg
 
 
-def make_monthly_buys(api, force_execute=False, investment_calc=None, margin_result=None):
+def make_monthly_buys(api, force_execute=False, investment_calc=None, margin_result=None, skip_order_wait=False, env="live"):
     """
     Make monthly HFEA purchases with margin-aware logic and dynamic investment amounts.
     Uses All-or-Nothing approach: invest full amount or skip entirely.
@@ -973,7 +1117,7 @@ def make_monthly_buys(api, force_execute=False, investment_calc=None, margin_res
         margin_result = check_margin_conditions(api)
     
     if investment_calc is None:
-        investment_calc = calculate_monthly_investments(api, margin_result)
+        investment_calc = calculate_monthly_investments(api, margin_result, env)
     
     investment_amount = investment_calc["strategy_amounts"]["hfea_allo"]
     
@@ -1058,24 +1202,84 @@ def make_monthly_buys(api, force_execute=False, investment_calc=None, margin_res
     tmf_shares_to_buy = tmf_amount / tmf_price
     kmlm_shares_to_buy = kmlm_amount / kmlm_price
 
-    # Execute market orders
+    # Load current strategy state from Firestore
+    balances = load_balances(env)
+    hfea_data = balances.get("hfea", {})
+    total_invested = hfea_data.get("total_invested", 0)
+    current_positions = hfea_data.get("current_positions", {})
+    
+    print(f"HFEA Strategy - Investment: ${investment_amount:.2f}")
+    print(f"Current positions: {current_positions}")
+    print(f"Total invested: ${total_invested:.2f}")
+    
+    # Execute market orders with enhanced tracking
     shares_bought = []
-    for symbol, qty in [
-        ("UPRO", upro_shares_to_buy),
-        ("TMF", tmf_shares_to_buy),
-        ("KMLM", kmlm_shares_to_buy),
+    trades_executed = []
+    
+    for symbol, qty, amount in [
+        ("UPRO", upro_shares_to_buy, upro_amount),
+        ("TMF", tmf_shares_to_buy, tmf_amount),
+        ("KMLM", kmlm_shares_to_buy, kmlm_amount),
     ]:
         if qty > 0:
             submit_order(api, symbol, qty, "buy")
+            if not skip_order_wait:
+                # Note: HFEA doesn't have individual order IDs, so we can't wait for specific fills
+                pass
             print(f"Bought {qty:.6f} shares of {symbol}.")
             shares_bought.append(f"{symbol}: {qty:.4f} shares")
+            trades_executed.append(f"Bought {qty:.4f} shares of {symbol} (${amount:.2f})")
         else:
             print(f"No shares of {symbol} bought due to small amount.")
     
-    # Create action summary
-    action_taken = f"Invested ${investment_amount:.2f} - " + ", ".join(shares_bought)
+    # Calculate new total invested
+    new_total_invested = total_invested + investment_amount
     
-    # Send consolidated margin summary message with investment calculation
+    # Update current positions (add to existing)
+    new_positions = current_positions.copy()
+    for symbol, qty in [("UPRO", upro_shares_to_buy), ("TMF", tmf_shares_to_buy), ("KMLM", kmlm_shares_to_buy)]:
+        if qty > 0:
+            new_positions[symbol] = new_positions.get(symbol, 0) + qty
+    
+    # Enhanced Telegram message with detailed decision rationale
+    telegram_msg = f"🎯 HFEA Strategy Decision\n\n"
+    telegram_msg += f"📊 Allocation Analysis:\n"
+    telegram_msg += f"• UPRO (45%): ${upro_amount:.2f} → {upro_shares_to_buy:.4f} shares @ ${upro_price:.2f}\n"
+    telegram_msg += f"• TMF (25%): ${tmf_amount:.2f} → {tmf_shares_to_buy:.4f} shares @ ${tmf_price:.2f}\n"
+    telegram_msg += f"• KMLM (30%): ${kmlm_amount:.2f} → {kmlm_shares_to_buy:.4f} shares @ ${kmlm_price:.2f}\n\n"
+    telegram_msg += f"🎯 Strategy Logic:\n"
+    telegram_msg += f"• Three-asset leveraged portfolio (UPRO/TMF/KMLM)\n"
+    telegram_msg += f"• Enhanced diversification through managed futures (KMLM)\n"
+    telegram_msg += f"• Underweight-based allocation system\n\n"
+    telegram_msg += f"⚡ Trade Execution Summary:\n"
+    telegram_msg += f"• Total trades executed: {len(trades_executed)}\n"
+    for trade in trades_executed:
+        telegram_msg += f"  • {trade}\n"
+    telegram_msg += f"\n💰 Portfolio Summary:\n"
+    telegram_msg += f"• Investment amount: ${investment_amount:.2f}\n"
+    telegram_msg += f"• Total invested: ${new_total_invested:.2f}\n"
+    telegram_msg += f"• Current positions: {len([k for k, v in new_positions.items() if v > 0])} assets"
+    
+    send_telegram_message(telegram_msg)
+    
+    # Update Firestore with comprehensive tracking
+    save_balance("hfea", {
+        "total_invested": new_total_invested,
+        "current_positions": new_positions,
+        "last_trade_date": datetime.datetime.now().strftime("%Y-%m-%d"),
+        "last_allocation": {
+            "upro_amount": upro_amount,
+            "tmf_amount": tmf_amount,
+            "kmlm_amount": kmlm_amount,
+            "upro_price": upro_price,
+            "tmf_price": tmf_price,
+            "kmlm_price": kmlm_price
+        },
+        "trades_executed": trades_executed
+    }, env)
+    
+    # Create action summary for margin message
+    action_taken = f"Invested ${investment_amount:.2f} - " + ", ".join(shares_bought)
     send_margin_summary_message(margin_result, "HFEA", action_taken, investment_calc)
     
     return "Monthly investment executed."
@@ -1499,7 +1703,7 @@ def check_trading_day(mode="daily"):
     raise ValueError("Invalid mode. Use 'daily', 'monthly', or 'quarterly'.")
 
 
-def monthly_buying_sma(api, symbol, force_execute=False, investment_calc=None, margin_result=None):
+def monthly_buying_sma(api, symbol, force_execute=False, investment_calc=None, margin_result=None, skip_order_wait=False, env="live"):
     """
     Monthly SMA-based investment with margin-aware logic and dynamic investment amounts.
     Uses All-or-Nothing approach: invest full amount or skip entirely.
@@ -1536,7 +1740,7 @@ def monthly_buying_sma(api, symbol, force_execute=False, investment_calc=None, m
         margin_result = check_margin_conditions(api)
     
     if investment_calc is None:
-        investment_calc = calculate_monthly_investments(api, margin_result)
+        investment_calc = calculate_monthly_investments(api, margin_result, env)
     
     investment_amount = investment_calc["strategy_amounts"]["spxl_allo"]
     
@@ -1547,7 +1751,14 @@ def monthly_buying_sma(api, symbol, force_execute=False, investment_calc=None, m
     # Determine available buying power (already calculated in investment_calc)
     buying_power = investment_calc["total_available"] + investment_calc["margin_approved"]
 
+    # Load current strategy state from Firestore
+    balances = load_balances(env)
+    spxl_data = balances.get(f"{symbol}_SMA", {})
+    total_invested = spxl_data.get("total_invested", 0)
+    current_shares = spxl_data.get("current_shares", 0)
+    
     print(f"{symbol}: Investment=${investment_amount:.2f}, Price={latest_price:.2f}, SMA={sma_200:.2f}, Leverage={leverage:.2f}x")
+    print(f"Current shares: {current_shares:.4f}, Total invested: ${total_invested:.2f}")
     
     # Check SMA trend
     if latest_price > sma_200 * (1 + margin):
@@ -1589,11 +1800,52 @@ def monthly_buying_sma(api, symbol, force_execute=False, investment_calc=None, m
 
         if shares_to_buy > 0:
             order = submit_order(api, symbol, shares_to_buy, "buy")
-            wait_for_order_fill(api, order["id"])
-            positions = list_positions(api)
-            position = next((p for p in positions if p["symbol"] == symbol), None)
-            invested = float(position["market_value"]) if position else 0
-            save_balance(symbol + "_SMA", invested)
+            if not skip_order_wait:
+                wait_for_order_fill(api, order["id"])
+            
+            # Calculate new totals
+            new_total_shares = current_shares + shares_to_buy
+            new_total_invested = total_invested + investment_amount
+            
+            # Enhanced Telegram message with detailed decision rationale
+            telegram_msg = f"🎯 {symbol} SMA Strategy Decision\n\n"
+            telegram_msg += f"📊 Trend Analysis:\n"
+            telegram_msg += f"• SPY Price: ${latest_price:.2f}\n"
+            telegram_msg += f"• SPY 200-SMA: ${sma_200:.2f}\n"
+            telegram_msg += f"• Trend Status: 🟢 BULLISH (Price > SMA + {margin:.1%})\n"
+            telegram_msg += f"• Margin: {margin:.1%} band around SMA\n\n"
+            telegram_msg += f"🎯 Strategy Logic:\n"
+            telegram_msg += f"• Trend-following with market timing\n"
+            telegram_msg += f"• Uses SPY as S&P 500 proxy for {symbol} decisions\n"
+            telegram_msg += f"• Exits during downtrends to avoid drawdowns\n\n"
+            telegram_msg += f"⚡ Trade Execution Summary:\n"
+            telegram_msg += f"• Investment amount: ${investment_amount:.2f}\n"
+            telegram_msg += f"• Target asset: {symbol}\n"
+            telegram_msg += f"• Shares bought: {shares_to_buy:.4f}\n"
+            telegram_msg += f"• Price per share: ${price:.2f}\n"
+            telegram_msg += f"• Total shares: {new_total_shares:.4f}\n"
+            telegram_msg += f"• Total invested: ${new_total_invested:.2f}"
+            
+            send_telegram_message(telegram_msg)
+            
+            # Update Firestore with comprehensive tracking
+            save_balance(f"{symbol}_SMA", {
+                "total_invested": new_total_invested,
+                "current_shares": new_total_shares,
+                "last_trade_date": datetime.datetime.now().strftime("%Y-%m-%d"),
+                "last_trade": {
+                    "action": "buy",
+                    "shares": shares_to_buy,
+                    "price": price,
+                    "amount": investment_amount
+                },
+                "trend_analysis": {
+                    "spy_price": latest_price,
+                    "spy_sma_200": sma_200,
+                    "trend_status": "bullish",
+                    "margin_band": margin
+                }
+            }, env)
             
             action_taken = f"Bought {shares_to_buy:.4f} shares of {symbol} (${investment_amount:.2f})"
             send_margin_summary_message(margin_result, f"{symbol} SMA", action_taken, investment_calc)
@@ -2249,6 +2501,766 @@ def check_unified_index_alert(request):
         return jsonify({"error": error_message}), 500
 
 
+def get_dual_momentum_position_value(api):
+    """
+    Get current value and position details for dual momentum strategy.
+    
+    Args:
+        api: Alpaca API credentials
+    
+    Returns:
+        dict: {
+            "total_value": float,
+            "current_position": str,
+            "shares_held": float,
+            "position_value": float
+        }
+    """
+    try:
+        positions = api.list_positions()
+        dual_momentum_symbols = ["SSO", "EFO", "BND"]
+        
+        total_value = 0
+        current_position = None
+        shares_held = 0
+        
+        for position in positions:
+            if position.symbol in dual_momentum_symbols:
+                position_value = float(position.market_value)
+                total_value += position_value
+                if position_value > 0:
+                    current_position = position.symbol
+                    shares_held = float(position.qty)
+        
+        return {
+            "total_value": total_value,
+            "current_position": current_position,
+            "shares_held": shares_held,
+            "position_value": total_value
+        }
+    except Exception as e:
+        print(f"Error getting dual momentum position value: {e}")
+        return {
+            "total_value": 0,
+            "current_position": None,
+            "shares_held": 0,
+            "position_value": 0
+        }
+
+
+def calculate_12_month_returns(api, symbol):
+    """
+    Calculate 12-month return (252 trading days) for a symbol.
+    
+    Args:
+        api: Alpaca API credentials
+        symbol: Symbol to calculate return for
+    
+    Returns:
+        float: 12-month return or None if error
+    """
+    try:
+        # Get current price
+        current_price = float(get_latest_trade(api, symbol))
+        
+        # Get price from 252 trading days ago
+        bars = get_alpaca_historical_bars(api, symbol, days=400)
+        
+        if len(bars) < 252:
+            print(f"Warning: Only {len(bars)} days of data available for {symbol}")
+            return None
+        
+        # Get price from 252 trading days ago
+        price_252_days_ago = bars[-253]  # -253 because -252 would be 251 days ago
+        
+        if price_252_days_ago == 0:
+            return None
+        
+        return (current_price / price_252_days_ago) - 1
+        
+    except Exception as e:
+        print(f"Error calculating 12-month return for {symbol}: {e}")
+        return None
+
+
+def calculate_multi_period_momentum(api, ticker):
+    """
+    Calculate multi-period momentum score for a sector ETF.
+    
+    Uses weighted combination of 1-month (40%), 3-month (20%), 6-month (20%), and 12-month (20%) returns.
+    
+    Args:
+        api: Alpaca API credentials
+        ticker: Sector ETF ticker (e.g., 'XLK', 'XLF')
+    
+    Returns:
+        float: Weighted composite momentum score or None if error
+    """
+    try:
+        # Get current price
+        current_price = float(get_latest_trade(api, ticker))
+        
+        # Get historical bars (need 252+ days for 12-month calculation)
+        bars = get_alpaca_historical_bars(api, ticker, days=400)
+        
+        if len(bars) < 252:
+            print(f"Warning: Only {len(bars)} days of data available for {ticker}")
+            return None
+        
+        # Calculate returns for each period
+        returns = {}
+        weights = sector_momentum_config["momentum_weights"]
+        periods = sector_momentum_config["lookback_periods"]
+        
+        for period_name, days in periods.items():
+            try:
+                # Get price from N days ago
+                price_n_days_ago = bars[-(days + 1)]  # +1 because we want exactly N days ago
+                
+                if price_n_days_ago == 0:
+                    print(f"Warning: Zero price {days} days ago for {ticker}")
+                    return None
+                
+                # Calculate return
+                period_return = (current_price / price_n_days_ago) - 1
+                returns[period_name] = period_return
+                
+            except Exception as e:
+                print(f"Error calculating {period_name} return for {ticker}: {e}")
+                return None
+        
+        # Calculate weighted composite score
+        composite_score = (
+            weights["1_month"] * returns["1_month"] +
+            weights["3_month"] * returns["3_month"] +
+            weights["6_month"] * returns["6_month"] +
+            weights["12_month"] * returns["12_month"]
+        )
+        
+        return composite_score
+        
+    except Exception as e:
+        print(f"Error calculating multi-period momentum for {ticker}: {e}")
+        return None
+
+
+def rank_sectors_by_momentum(api):
+    """
+    Rank all sector ETFs by their multi-period momentum scores.
+    
+    Args:
+        api: Alpaca API credentials
+    
+    Returns:
+        list: List of tuples (ticker, momentum_score) sorted by score descending
+    """
+    print("Calculating momentum scores for all sector ETFs...")
+    
+    sector_scores = []
+    sector_etfs = sector_momentum_config["sector_etfs"]
+    
+    for ticker in sector_etfs:
+        print(f"Calculating momentum for {ticker}...")
+        momentum_score = calculate_multi_period_momentum(api, ticker)
+        
+        if momentum_score is not None:
+            sector_scores.append((ticker, momentum_score))
+            print(f"{ticker}: {momentum_score:.4f} ({momentum_score:.2%})")
+        else:
+            print(f"Warning: Could not calculate momentum for {ticker}")
+    
+    # Sort by momentum score (descending)
+    sector_scores.sort(key=lambda x: x[1], reverse=True)
+    
+    print("\nSector momentum rankings:")
+    for i, (ticker, score) in enumerate(sector_scores, 1):
+        print(f"{i:2d}. {ticker}: {score:.4f} ({score:.2%})")
+    
+    return sector_scores
+
+
+def get_sector_momentum_positions(api):
+    """
+    Get current sector ETF positions from Alpaca account.
+    
+    Args:
+        api: Alpaca API credentials
+    
+    Returns:
+        dict: Dictionary with ticker -> shares held for sector ETFs only
+    """
+    try:
+        # Get all positions
+        positions = api.list_positions()
+        
+        # Filter for sector ETFs only
+        sector_positions = {}
+        sector_etfs = sector_momentum_config["sector_etfs"]
+        bond_etf = sector_momentum_config["bond_etf"]
+        
+        # Include both sector ETFs and bond ETF
+        allowed_tickers = sector_etfs + [bond_etf]
+        
+        for position in positions:
+            ticker = position.symbol
+            if ticker in allowed_tickers and float(position.qty) > 0:
+                sector_positions[ticker] = float(position.qty)
+        
+        print(f"Current sector momentum positions: {sector_positions}")
+        return sector_positions
+        
+    except Exception as e:
+        print(f"Error getting sector momentum positions: {e}")
+        return {}
+
+
+def get_sector_momentum_value(api):
+    """
+    Calculate total value of sector momentum strategy positions.
+    
+    Args:
+        api: Alpaca API credentials
+    
+    Returns:
+        dict: Dictionary with total_value, position_breakdown, and invested_amount
+    """
+    try:
+        # Get current positions
+        positions = get_sector_momentum_positions(api)
+        
+        if not positions:
+            return {
+                "total_value": 0,
+                "position_breakdown": {},
+                "invested_amount": 0
+            }
+        
+        # Calculate current value for each position
+        position_breakdown = {}
+        total_value = 0
+        
+        for ticker, shares in positions.items():
+            try:
+                current_price = float(get_latest_trade(api, ticker))
+                position_value = shares * current_price
+                position_breakdown[ticker] = {
+                    "shares": shares,
+                    "price": current_price,
+                    "value": position_value
+                }
+                total_value += position_value
+                
+            except Exception as e:
+                print(f"Error calculating value for {ticker}: {e}")
+                position_breakdown[ticker] = {
+                    "shares": shares,
+                    "price": 0,
+                    "value": 0
+                }
+        
+        # Get invested amount from Firestore
+        balances = load_balances()
+        sector_data = balances.get("sector_momentum", {})
+        invested_amount = sector_data.get("total_invested", 0)
+        
+        return {
+            "total_value": total_value,
+            "position_breakdown": position_breakdown,
+            "invested_amount": invested_amount
+        }
+        
+    except Exception as e:
+        print(f"Error calculating sector momentum value: {e}")
+        return {
+            "total_value": 0,
+            "position_breakdown": {},
+            "invested_amount": 0
+        }
+
+
+def monthly_dual_momentum_strategy(api, force_execute=False, investment_calc=None, margin_result=None, skip_order_wait=False, env="live"):
+    """
+    Dual Momentum Strategy implementation with SSO/EFO/BND.
+    
+    Combines relative momentum (SSO vs EFO) and absolute momentum (winner > 0%).
+    Handles both monthly contributions and position switching.
+    
+    Args:
+        api: Alpaca API credentials
+        force_execute: Bypass trading day check for testing
+        investment_calc: Pre-calculated investment amounts (from orchestrator) - optional
+        margin_result: Pre-calculated margin conditions (from orchestrator) - optional
+    
+    Returns:
+        str: Result message
+    """
+    if not force_execute and not check_trading_day(mode="monthly"):
+        print("Not first trading day of the month")
+        return "Not first trading day of the month"
+    
+    if force_execute:
+        print("Dual Momentum: Force execution enabled - bypassing trading day check")
+        send_telegram_message("Dual Momentum: Force execution enabled for testing - bypassing trading day check")
+    
+    # If not provided by orchestrator, calculate independently
+    if margin_result is None:
+        margin_result = check_margin_conditions(api)
+    
+    if investment_calc is None:
+        investment_calc = calculate_monthly_investments(api, margin_result, env)
+    
+    investment_amount = investment_calc["strategy_amounts"]["dual_momentum_allo"]
+    
+    # Load current strategy state from Firestore
+    balances = load_balances(env)
+    dual_momentum_data = balances.get("dual_momentum", {})
+    total_invested = dual_momentum_data.get("total_invested", 0)
+    current_position = dual_momentum_data.get("current_position", None)
+    shares_held = dual_momentum_data.get("shares_held", 0)
+    
+    print(f"Dual Momentum Strategy - Investment: ${investment_amount:.2f}")
+    print(f"Current position: {current_position}, Shares: {shares_held:.4f}")
+    print(f"Total invested: ${total_invested:.2f}")
+    
+    # Calculate 12-month returns for SSO and EFO
+    print("Calculating 12-month momentum...")
+    sso_return = calculate_12_month_returns(api, "SSO")
+    efo_return = calculate_12_month_returns(api, "EFO")
+    
+    if sso_return is None or efo_return is None:
+        error_msg = "Failed to calculate momentum returns - skipping strategy"
+        print(error_msg)
+        send_telegram_message(f"Dual Momentum Error: {error_msg}")
+        return error_msg
+    
+    # Determine relative momentum winner
+    if sso_return > efo_return:
+        winner = "SSO"
+        winner_return = sso_return
+    else:
+        winner = "EFO"
+        winner_return = efo_return
+    
+    # Apply absolute momentum check
+    if winner_return > 0:
+        target_position = winner
+    else:
+        target_position = "BND"
+    
+    print(f"SSO 12-month return: {sso_return:.2%}")
+    print(f"EFO 12-month return: {efo_return:.2%}")
+    print(f"Winner: {winner} ({winner_return:.2%})")
+    print(f"Target position: {target_position}")
+    
+    # Check if we need to switch positions
+    position_changed = current_position != target_position
+    
+    if position_changed:
+        print(f"Position change required: {current_position} -> {target_position}")
+        
+        # Sell current position if exists
+        if current_position is not None and shares_held > 0:
+            try:
+                sell_order = submit_order(api, current_position, shares_held, "sell")
+                wait_for_order_fill(api, sell_order["id"])
+                print(f"Sold {shares_held:.4f} shares of {current_position}")
+                send_telegram_message(f"Dual Momentum: Sold {shares_held:.4f} shares of {current_position}")
+            except Exception as e:
+                error_msg = f"Failed to sell {current_position}: {e}"
+                print(error_msg)
+                send_telegram_message(f"Dual Momentum Error: {error_msg}")
+                return error_msg
+        
+        # Calculate total value to invest (existing + new)
+        current_value = get_dual_momentum_position_value(api)["total_value"]
+        total_to_invest = current_value + investment_amount
+        
+        # Buy new position
+        if total_to_invest > 0:
+            try:
+                target_price = float(get_latest_trade(api, target_position))
+                shares_to_buy = total_to_invest / target_price
+                
+                buy_order = submit_order(api, target_position, shares_to_buy, "buy")
+                if not skip_order_wait:
+                    wait_for_order_fill(api, buy_order["id"])
+                
+                print(f"Bought {shares_to_buy:.4f} shares of {target_position}")
+                
+                # Enhanced Telegram message with detailed decision rationale
+                telegram_msg = f"🎯 Dual Momentum Strategy Decision\n\n"
+                telegram_msg += f"📊 Momentum Analysis:\n"
+                telegram_msg += f"• SSO 12-month return: {sso_return:.2%}\n"
+                telegram_msg += f"• EFO 12-month return: {efo_return:.2%}\n"
+                telegram_msg += f"• Relative winner: {winner} ({winner_return:.2%})\n\n"
+                telegram_msg += f"🎯 Decision Logic:\n"
+                if winner_return > 0:
+                    telegram_msg += f"• Absolute momentum: POSITIVE ({winner_return:.2%} > 0%)\n"
+                    telegram_msg += f"• Action: Invest in {winner} (relative + absolute momentum winner)\n"
+                else:
+                    telegram_msg += f"• Absolute momentum: NEGATIVE ({winner_return:.2%} ≤ 0%)\n"
+                    telegram_msg += f"• Action: Invest in BND (safety during negative momentum)\n\n"
+                telegram_msg += f"💰 Trade Details:\n"
+                telegram_msg += f"• Investment amount: ${investment_amount:.2f}\n"
+                telegram_msg += f"• Target asset: {target_position}\n"
+                telegram_msg += f"• Shares bought: {shares_to_buy:.4f}\n"
+                telegram_msg += f"• Price per share: ${target_price:.2f}\n"
+                telegram_msg += f"• Total invested: ${total_invested + investment_amount:.2f}"
+                
+                send_telegram_message(telegram_msg)
+                
+                # Update Firestore
+                save_balance("dual_momentum", {
+                    "total_invested": total_invested + investment_amount,
+                    "current_position": target_position,
+                    "shares_held": shares_to_buy,
+                    "last_trade_date": datetime.datetime.now().strftime("%Y-%m-%d"),
+                    "last_momentum_check": {
+                        "sso_return": sso_return,
+                        "efo_return": efo_return,
+                        "winner": winner,
+                        "signal": target_position
+                    }
+                }, env)
+                
+            except Exception as e:
+                error_msg = f"Failed to buy {target_position}: {e}"
+                print(error_msg)
+                send_telegram_message(f"Dual Momentum Error: {error_msg}")
+                return error_msg
+    
+    else:
+        # No position change needed, just add to existing position
+        if investment_amount > 0:
+            try:
+                target_price = float(get_latest_trade(api, target_position))
+                additional_shares = investment_amount / target_price
+                
+                buy_order = submit_order(api, target_position, additional_shares, "buy")
+                if not skip_order_wait:
+                    wait_for_order_fill(api, buy_order["id"])
+                
+                new_total_shares = shares_held + additional_shares
+                new_total_invested = total_invested + investment_amount
+                
+                print(f"Added {additional_shares:.4f} shares of {target_position}")
+                
+                # Update Firestore
+                save_balance("dual_momentum", {
+                    "total_invested": new_total_invested,
+                    "current_position": target_position,
+                    "shares_held": new_total_shares,
+                    "last_trade_date": datetime.datetime.now().strftime("%Y-%m-%d"),
+                    "last_momentum_check": {
+                        "sso_return": sso_return,
+                        "efo_return": efo_return,
+                        "winner": winner,
+                        "signal": target_position
+                    }
+                }, env)
+                
+            except Exception as e:
+                error_msg = f"Failed to add to {target_position}: {e}"
+                print(error_msg)
+                send_telegram_message(f"Dual Momentum Error: {error_msg}")
+                return error_msg
+    
+    # Calculate and report strategy performance
+    final_position_value = get_dual_momentum_position_value(api)
+    final_total_invested = total_invested + investment_amount
+    strategy_return = (final_position_value["total_value"] / final_total_invested - 1) if final_total_invested > 0 else 0
+    
+    # Enhanced final summary
+    summary_msg = f"🎯 Dual Momentum Strategy Summary\n\n"
+    summary_msg += f"📊 Final Position: {target_position}\n"
+    summary_msg += f"💰 Total Invested: ${final_total_invested:.2f}\n"
+    summary_msg += f"📈 Current Value: ${final_position_value['total_value']:.2f}\n"
+    summary_msg += f"📊 Strategy Return: {strategy_return:.2%}\n\n"
+    summary_msg += f"🔍 Decision Recap:\n"
+    summary_msg += f"• SSO Return: {sso_return:.2%}\n"
+    summary_msg += f"• EFO Return: {efo_return:.2%}\n"
+    summary_msg += f"• Winner: {winner} ({winner_return:.2%})\n"
+    summary_msg += f"• Final Choice: {target_position} {'(momentum winner)' if target_position == winner else '(safety bonds)'}"
+    
+    print(summary_msg)
+    send_telegram_message(summary_msg)
+    
+    result_msg = f"Dual Momentum Strategy completed. Position: {target_position}, Return: {strategy_return:.2%}"
+    
+    return result_msg
+
+
+def monthly_sector_momentum_strategy(api, force_execute=False, investment_calc=None, margin_result=None, skip_order_wait=False, env="live"):
+    """
+    Sector Momentum Rotation Strategy implementation.
+    
+    Invests in top 3 performing sector ETFs based on multi-period momentum,
+    with SPY 200-SMA trend filtering. Switches to SCHZ bonds when SPY < 200-SMA.
+    
+    Args:
+        api: Alpaca API credentials
+        force_execute: Bypass trading day check for testing
+        investment_calc: Pre-calculated investment amounts (from orchestrator) - optional
+        margin_result: Pre-calculated margin conditions (from orchestrator) - optional
+    
+    Returns:
+        str: Result message
+    """
+    if not force_execute and not check_trading_day(mode="monthly"):
+        print("Not first trading day of the month")
+        return "Not first trading day of the month"
+    
+    if force_execute:
+        print("Sector Momentum: Force execution enabled - bypassing trading day check")
+        send_telegram_message("Sector Momentum: Force execution enabled for testing - bypassing trading day check")
+    
+    # If not provided by orchestrator, calculate independently
+    if margin_result is None:
+        margin_result = check_margin_conditions(api)
+    
+    if investment_calc is None:
+        investment_calc = calculate_monthly_investments(api, margin_result, env)
+    
+    investment_amount = investment_calc["strategy_amounts"]["sector_momentum_allo"]
+    
+    # Load current strategy state from Firestore
+    balances = load_balances(env)
+    sector_data = balances.get("sector_momentum", {})
+    total_invested = sector_data.get("total_invested", 0)
+    current_positions = sector_data.get("current_positions", {})
+    
+    print(f"Sector Momentum Strategy - Investment: ${investment_amount:.2f}")
+    print(f"Current positions: {current_positions}")
+    print(f"Total invested: ${total_invested:.2f}")
+    
+    # Check SPY 200-SMA trend filter using cached market data
+    print("Checking SPY 200-SMA trend filter...")
+    try:
+        # Get all SPY market data at once (efficient single fetch/read)
+        spy_data = get_all_market_data("SPY")
+        if spy_data is None:
+            spy_data = update_market_data("SPY")
+        
+        spy_price = spy_data["price"]
+        spy_sma = spy_data["sma200"]
+        
+        if spy_sma is None:
+            error_msg = "Failed to get SPY SMA - skipping strategy"
+            print(error_msg)
+            send_telegram_message(f"Sector Momentum Error: {error_msg}")
+            return error_msg
+        
+        spy_above_sma_current = spy_price > spy_sma
+        print(f"SPY: ${spy_price:.2f}, 200-SMA: ${spy_sma:.2f}, Above SMA: {spy_above_sma_current}")
+        
+    except Exception as e:
+        error_msg = f"Error checking SPY SMA: {e}"
+        print(error_msg)
+        send_telegram_message(f"Sector Momentum Error: {error_msg}")
+        return error_msg
+    
+    # Calculate current strategy value
+    current_value_data = get_sector_momentum_value(api)
+    current_value = current_value_data["total_value"]
+    total_to_allocate = current_value + investment_amount
+    
+    print(f"Current strategy value: ${current_value:.2f}")
+    print(f"Total to allocate: ${total_to_allocate:.2f}")
+    
+    trades_executed = []
+    
+    if spy_above_sma_current:
+        # Sector Mode: Invest in top 3 sectors
+        print("SPY above 200-SMA: Proceeding with sector selection")
+        
+        # Rank sectors by momentum
+        sector_rankings = rank_sectors_by_momentum(api)
+        
+        if len(sector_rankings) < 3:
+            error_msg = "Not enough sectors with valid momentum data"
+            print(error_msg)
+            send_telegram_message(f"Sector Momentum Error: {error_msg}")
+            return error_msg
+        
+        # Select top 3 sectors
+        top_3_sectors = [ticker for ticker, score in sector_rankings[:3]]
+        print(f"Top 3 sectors: {top_3_sectors}")
+        
+        # Calculate target allocation per sector (33.33% each)
+        target_allocation_per_sector = total_to_allocate * sector_momentum_config["target_allocation_per_sector"]
+        
+        # Sell sectors not in top 3
+        current_positions_list = list(current_positions.keys())
+        sectors_to_sell = [ticker for ticker in current_positions_list if ticker not in top_3_sectors]
+        
+        for ticker in sectors_to_sell:
+            shares_to_sell = current_positions[ticker]
+            if shares_to_sell > 0:
+                try:
+                    sell_order = submit_order(api, ticker, shares_to_sell, "sell")
+                    if not skip_order_wait:
+                        wait_for_order_fill(api, sell_order["id"])
+                    trades_executed.append(f"Sold {shares_to_sell:.4f} shares of {ticker} (dropped from top 3)")
+                    print(f"Sold {shares_to_sell:.4f} shares of {ticker}")
+                except Exception as e:
+                    error_msg = f"Failed to sell {ticker}: {e}"
+                    print(error_msg)
+                    send_telegram_message(f"Sector Momentum Error: {error_msg}")
+                    return error_msg
+        
+        # Rebalance to target allocations for top 3 sectors
+        for ticker in top_3_sectors:
+            try:
+                current_price = float(get_latest_trade(api, ticker))
+                current_shares = current_positions.get(ticker, 0)
+                
+                # Calculate target shares
+                target_shares = target_allocation_per_sector / current_price
+                shares_delta = target_shares - current_shares
+                
+                if abs(shares_delta) > 0.01:  # Only trade if difference is meaningful
+                    if shares_delta > 0:
+                        # Buy more shares
+                        buy_order = submit_order(api, ticker, shares_delta, "buy")
+                        if not skip_order_wait:
+                            wait_for_order_fill(api, buy_order["id"])
+                        trades_executed.append(f"Bought {shares_delta:.4f} shares of {ticker} (rebalancing to 33.33%)")
+                        print(f"Bought {shares_delta:.4f} shares of {ticker}")
+                    else:
+                        # Sell shares
+                        sell_order = submit_order(api, ticker, abs(shares_delta), "sell")
+                        if not skip_order_wait:
+                            wait_for_order_fill(api, sell_order["id"])
+                        trades_executed.append(f"Sold {abs(shares_delta):.4f} shares of {ticker} (rebalancing to 33.33%)")
+                        print(f"Sold {abs(shares_delta):.4f} shares of {ticker}")
+                
+            except Exception as e:
+                error_msg = f"Failed to rebalance {ticker}: {e}"
+                print(error_msg)
+                send_telegram_message(f"Sector Momentum Error: {error_msg}")
+                return error_msg
+        
+        # Update Firestore with sector positions
+        new_positions = {}
+        for ticker in top_3_sectors:
+            try:
+                current_price = float(get_latest_trade(api, ticker))
+                target_shares = target_allocation_per_sector / current_price
+                new_positions[ticker] = target_shares
+            except Exception as e:
+                print(f"Error updating position for {ticker}: {e}")
+        
+        save_balance("sector_momentum", {
+            "total_invested": total_invested + investment_amount,
+            "current_positions": new_positions,
+            "last_trade_date": datetime.datetime.now().strftime("%Y-%m-%d"),
+            "top_3_sectors": top_3_sectors,
+            "spy_above_sma": True,
+            "last_momentum_scores": dict(sector_rankings[:5])  # Top 5 for reference
+        }, env)
+        
+    else:
+        # Bond Mode: Sell all sectors, invest in SCHZ
+        print("SPY below 200-SMA: Switching to bond mode (SCHZ)")
+        
+        bond_etf = sector_momentum_config["bond_etf"]
+        
+        # Sell all sector positions
+        for ticker, shares in current_positions.items():
+            if shares > 0:
+                try:
+                    sell_order = submit_order(api, ticker, shares, "sell")
+                    if not skip_order_wait:
+                        wait_for_order_fill(api, sell_order["id"])
+                    trades_executed.append(f"Sold {shares:.4f} shares of {ticker}")
+                    print(f"Sold {shares:.4f} shares of {ticker}")
+                except Exception as e:
+                    error_msg = f"Failed to sell {ticker}: {e}"
+                    print(error_msg)
+                    send_telegram_message(f"Sector Momentum Error: {error_msg}")
+                    return error_msg
+        
+        # Invest all in SCHZ
+        if total_to_allocate > 0:
+            try:
+                schz_price = float(get_latest_trade(api, bond_etf))
+                schz_shares = total_to_allocate / schz_price
+                
+                buy_order = submit_order(api, bond_etf, schz_shares, "buy")
+                if not skip_order_wait:
+                    wait_for_order_fill(api, buy_order["id"])
+                
+                trades_executed.append(f"Bought {schz_shares:.4f} shares of {bond_etf} (bear market protection)")
+                print(f"Bought {schz_shares:.4f} shares of {bond_etf}")
+                
+                # Update Firestore
+                save_balance("sector_momentum", {
+                    "total_invested": total_invested + investment_amount,
+                    "current_positions": {bond_etf: schz_shares},
+                    "last_trade_date": datetime.datetime.now().strftime("%Y-%m-%d"),
+                    "top_3_sectors": [],
+                    "spy_above_sma": False,
+                    "last_momentum_scores": {}
+                }, env)
+                
+            except Exception as e:
+                error_msg = f"Failed to buy {bond_etf}: {e}"
+                print(error_msg)
+                send_telegram_message(f"Sector Momentum Error: {error_msg}")
+                return error_msg
+    
+    # Calculate and report strategy performance
+    final_value_data = get_sector_momentum_value(api)
+    final_total_invested = total_invested + investment_amount
+    strategy_return = (final_value_data["total_value"] / final_total_invested - 1) if final_total_invested > 0 else 0
+    
+    # Prepare comprehensive Telegram report
+    telegram_msg = "🎯 Sector Momentum Strategy Decision\n\n"
+    
+    # Trend filter analysis
+    telegram_msg += f"📈 Trend Filter Analysis:\n"
+    telegram_msg += f"• SPY Price: ${spy_price:.2f}\n"
+    telegram_msg += f"• SPY 200-SMA: ${spy_sma:.2f}\n"
+    telegram_msg += f"• Trend Status: {'🟢 BULLISH' if spy_above_sma_current else '🔴 BEARISH'}\n"
+    telegram_msg += f"• Decision: {'Invest in sectors' if spy_above_sma_current else 'Switch to bonds (SCHZ)'}\n\n"
+    
+    if spy_above_sma_current and len(sector_rankings) >= 5:
+        # Multi-period momentum analysis
+        telegram_msg += f"📊 Multi-Period Momentum Analysis:\n"
+        telegram_msg += f"• Weights: 1M(40%), 3M(20%), 6M(20%), 12M(20%)\n"
+        telegram_msg += f"• All sector scores calculated:\n"
+        for i, (ticker, score) in enumerate(sector_rankings[:5], 1):
+            sector_name = sector_momentum_config["sector_names"].get(ticker, ticker)
+            telegram_msg += f"  {i}. {ticker} ({sector_name}): {score:.2%}\n"
+        telegram_msg += f"\n🎯 Selection Logic:\n"
+        top_3_with_names = [f"{ticker} ({sector_momentum_config['sector_names'].get(ticker, ticker)})" for ticker in top_3_sectors]
+        telegram_msg += f"• Top 3 sectors selected: {', '.join(top_3_with_names)}\n"
+        telegram_msg += f"• Allocation: 33.33% each\n"
+        telegram_msg += f"• Investment per sector: ${target_allocation_per_sector:.2f}\n\n"
+    else:
+        telegram_msg += f"🔒 Bond Mode Activated:\n"
+        telegram_msg += f"• Reason: SPY below 200-SMA (bearish trend)\n"
+        telegram_msg += f"• Action: Sell all sectors, invest in SCHZ (Bonds)\n"
+        telegram_msg += f"• Bond ETF: {bond_etf}\n\n"
+    
+    # Trade execution summary
+    telegram_msg += f"⚡ Trade Execution Summary:\n"
+    telegram_msg += f"• Total trades executed: {len(trades_executed)}\n"
+    if trades_executed:
+        for trade in trades_executed:
+            telegram_msg += f"  • {trade}\n"
+    telegram_msg += f"\n💰 Portfolio Summary:\n"
+    telegram_msg += f"• Total invested: ${final_total_invested:.2f}\n"
+    telegram_msg += f"• Current value: ${final_value_data['total_value']:.2f}\n"
+    telegram_msg += f"• Strategy return: {strategy_return:.2%}"
+    
+    print(telegram_msg)
+    send_telegram_message(telegram_msg)
+    
+    result_msg = f"Sector Momentum Strategy completed. Return: {strategy_return:.2%}"
+    return result_msg
+
+
 # Helper function to wait for an order to be filled
 def wait_for_order_fill(api, order_id, timeout=300, poll_interval=5):
     elapsed_time = 0
@@ -2271,9 +3283,9 @@ def wait_for_order_fill(api, order_id, timeout=300, poll_interval=5):
     )
 
 
-def monthly_invest_all_strategies(api, force_execute=False):
+def monthly_invest_all_strategies(api, force_execute=False, skip_order_wait=False, env="live"):
     """
-    Orchestrator function that runs all three monthly investment strategies.
+    Orchestrator function that runs all five monthly investment strategies.
     Calculates budgets ONCE and distributes them to ensure exact percentage splits.
     
     This prevents the problem of each function independently calculating and over-spending.
@@ -2283,7 +3295,7 @@ def monthly_invest_all_strategies(api, force_execute=False):
         force_execute: Bypass trading day check for testing
     
     Returns:
-        dict with results from all three strategies
+        dict with results from all five strategies
     """
     if not force_execute and not check_trading_day(mode="monthly"):
         print("Not first trading day of the month")
@@ -2294,24 +3306,32 @@ def monthly_invest_all_strategies(api, force_execute=False):
     print("Calculating budgets for all strategies...")
     
     margin_result = check_margin_conditions(api)
-    investment_calc = calculate_monthly_investments(api, margin_result)
+    investment_calc = calculate_monthly_investments(api, margin_result, env)
     
     print(f"Total investing power: ${investment_calc['total_investing']:.2f}")
-    print(f"  HFEA (47.5%): ${investment_calc['strategy_amounts']['hfea_allo']:.2f}")
-    print(f"  SPXL (47.5%): ${investment_calc['strategy_amounts']['spxl_allo']:.2f}")
+    print(f"  HFEA (37.5%): ${investment_calc['strategy_amounts']['hfea_allo']:.2f}")
+    print(f"  SPXL (37.5%): ${investment_calc['strategy_amounts']['spxl_allo']:.2f}")
     print(f"  9-Sig (5%): ${investment_calc['strategy_amounts']['nine_sig_allo']:.2f}")
+    print(f"  Dual Momentum (10%): ${investment_calc['strategy_amounts']['dual_momentum_allo']:.2f}")
+    print(f"  Sector Momentum (10%): ${investment_calc['strategy_amounts']['sector_momentum_allo']:.2f}")
     
-    # Run all three strategies with pre-calculated budgets
+    # Run all five strategies with pre-calculated budgets
     results = {}
     
     print("\n=== Executing HFEA ===")
-    results["hfea"] = make_monthly_buys(api, force_execute, investment_calc, margin_result)
+    results["hfea"] = make_monthly_buys(api, force_execute, investment_calc, margin_result, skip_order_wait, env)
     
     print("\n=== Executing SPXL SMA ===")
-    results["spxl"] = monthly_buying_sma(api, "SPXL", force_execute, investment_calc, margin_result)
+    results["spxl"] = monthly_buying_sma(api, "SPXL", force_execute, investment_calc, margin_result, skip_order_wait, env)
     
     print("\n=== Executing 9-Sig ===")
-    results["nine_sig"] = make_monthly_nine_sig_contributions(api, force_execute, investment_calc, margin_result)
+    results["nine_sig"] = make_monthly_nine_sig_contributions(api, force_execute, investment_calc, margin_result, skip_order_wait, env)
+    
+    print("\n=== Executing Dual Momentum ===")
+    results["dual_momentum"] = monthly_dual_momentum_strategy(api, force_execute, investment_calc, margin_result, skip_order_wait, env)
+    
+    print("\n=== Executing Sector Momentum ===")
+    results["sector_momentum"] = monthly_sector_momentum_strategy(api, force_execute, investment_calc, margin_result, skip_order_wait, env)
     
     print("\n=== All Monthly Strategies Complete ===")
     
@@ -2377,6 +3397,40 @@ def daily_trade_spxl_200sma(request):
     return result, 200
 
 
+@app.route("/monthly_dual_momentum", methods=["POST"])
+def monthly_dual_momentum(request):
+    """
+    Cloud Function endpoint for Dual Momentum Strategy.
+    Executes monthly dual momentum strategy with SSO/EFO/BND.
+    """
+    try:
+        api = set_alpaca_environment(env=alpaca_environment)
+        result = monthly_dual_momentum_strategy(api)
+        return jsonify({"result": result}), 200
+    except Exception as e:
+        error_message = f"Dual Momentum Strategy error: {str(e)}"
+        print(error_message)
+        send_telegram_message(error_message)
+        return jsonify({"error": error_message}), 500
+
+
+@app.route("/monthly_sector_momentum", methods=["POST"])
+def monthly_sector_momentum(request):
+    """
+    Cloud Function endpoint for Sector Momentum Strategy.
+    Executes monthly sector momentum rotation strategy with top 3 sector ETFs.
+    """
+    try:
+        api = set_alpaca_environment(env=alpaca_environment)
+        result = monthly_sector_momentum_strategy(api)
+        return jsonify({"result": result}), 200
+    except Exception as e:
+        error_message = f"Sector Momentum Strategy error: {str(e)}"
+        print(error_message)
+        send_telegram_message(error_message)
+        return jsonify({"error": error_message}), 500
+
+
 @app.route("/index_alert", methods=["POST"])
 def index_alert(request):
     return check_unified_index_alert(request)
@@ -2401,7 +3455,7 @@ def index_alert(request):
 def run_local(action, env="paper", request="test", force_execute=False):
     api = set_alpaca_environment(env=env, use_secret_manager=False)
     if action == "monthly_invest_all":
-        return monthly_invest_all_strategies(api, force_execute=force_execute)
+        return monthly_invest_all_strategies(api, force_execute=force_execute, skip_order_wait=True, env=env)
     elif action == "monthly_buy_hfea":
         return make_monthly_buys(api, force_execute=force_execute)
     elif action == "rebalance_hfea":
@@ -2418,6 +3472,10 @@ def run_local(action, env="paper", request="test", force_execute=False):
         return daily_trade_sma(api, "SPXL")
     elif action == "index_alert":
         return check_unified_index_alert(request)
+    elif action == "monthly_dual_momentum":
+        return monthly_dual_momentum_strategy(api, force_execute=force_execute, skip_order_wait=True, env=env)
+    elif action == "monthly_sector_momentum":
+        return monthly_sector_momentum_strategy(api, force_execute=force_execute, skip_order_wait=True, env=env)
     else:
         return "No valid action provided."
 
@@ -2437,10 +3495,12 @@ if __name__ == "__main__":
             "monthly_buy_spxl",
             "sell_spxl_below_200sma",
             "buy_spxl_above_200sma",
-            "index_alert"
+            "index_alert",
+            "monthly_dual_momentum",
+            "monthly_sector_momentum"
         ],
         required=True,
-        help="Action to perform: 'monthly_invest_all' runs all three monthly strategies with coordinated budgets (recommended)",
+        help="Action to perform: 'monthly_invest_all' runs all five monthly strategies with coordinated budgets (recommended)",
     )
     parser.add_argument(
         "--env",
