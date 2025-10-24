@@ -828,11 +828,6 @@ def load_balances(env="live"):
     return balances
 
 
-def update_balance_field(strategy, value):
-    doc_ref = get_firestore_client().collection("strategy-balances").document(strategy)
-    doc_ref.update({"invested": value})
-
-
 # 9-Sig Strategy Data Management Functions
 def save_nine_sig_quarterly_data(quarter_id, tqqq_balance, agg_balance, signal_line, action, quarterly_contributions):
     """Save quarterly data following 3Sig methodology for next quarter's calculations"""

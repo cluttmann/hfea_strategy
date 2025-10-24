@@ -571,12 +571,12 @@ margin_control_config = {
 
 ### **Data Storage:**
 - **Firestore Collections:**
-  - `strategy-balances`: Tracks invested amounts and position details for each strategy (including Dual Momentum position tracking)
+  - `strategy-balances-live` / `strategy-balances-paper`: Tracks invested amounts and position details for each strategy (including Dual Momentum position tracking)
   - `nine-sig-quarters`: Historical quarterly data for 9-Sig signal calculations
   - `nine-sig-monthly-contributions`: Tracks actual monthly 9-Sig contributions for accurate quarterly signal calculation
   - `market-data`: Unified collection caching market prices, SMA values (200-day, 255-day), crossing states, and alert timestamps (5-minute cache expiry) - single source of truth for all market data
 
-**Dual Momentum Tracking (in strategy-balances/dual_momentum):**
+**Dual Momentum Tracking (in strategy-balances-live/dual_momentum):**
   - `total_invested`: Cumulative cash contributions to strategy
   - `current_position`: Current holding (SPUU, EFO, or BND)
   - `shares_held`: Number of shares in current position
