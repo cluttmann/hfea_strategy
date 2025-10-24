@@ -57,7 +57,12 @@ This three-asset approach provides exposure to equity growth through leveraged S
 
 #### **Expected Returns (CAGR):**
 - The Golden HFEA Lite strategy aims to provide strong risk-adjusted returns through the combination of leveraged equity exposure, bond stability, and gold diversification.
-- **Historical Performance**: This allocation has shown strong performance in various market conditions, with gold providing diversification during equity downturns and bonds providing stability during market stress.
+- **Historical Performance**: Based on [backtesting from 1992-2025](https://testfol.io/?s=6KSoxd01a0K) (33.81 years), the SSO/ZROZ/GLD (50%/25%/25%) portfolio achieved **13.19% CAGR** with strong risk-adjusted returns:
+  - **Total Return**: 6,492.54% over ~34 years
+  - **Max Drawdown**: -46.26% (reasonable for leveraged strategy)
+  - **Volatility**: 18.02% (moderate for leveraged approach)
+  - **Sharpe Ratio**: 0.64 (good risk-adjusted returns)
+  - **Sortino Ratio**: 0.91 (excellent downside risk-adjusted returns)
 - The 2x leverage on equities provides enhanced returns during bull markets while the 25% allocation to bonds and gold provides downside protection and diversification benefits.
 
 #### **Research Sources:**
