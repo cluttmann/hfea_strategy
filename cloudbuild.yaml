@@ -31,6 +31,38 @@ steps:
     - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
     waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
 
+  #Step 2a: Deploy the monthly_buy_golden_hfea_liteFunction
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - functions
+    - deploy
+    - monthly_buy_golden_hfea_lite  # The name of the Cloud Function for monthly Golden HFEA Lite buys
+    - --source=.
+    - --trigger-http
+    - --region=europe-west3
+    - --runtime=python310
+    - --timeout=540s
+    - --entry-point=monthly_buy_golden_hfea_lite  # Entry point function in your Python code
+    - --memory=512MB
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
+
+  #Step 2b: Deploy the rebalance_golden_hfea_liteFunction
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - functions
+    - deploy
+    - rebalance_golden_hfea_lite  # The name of the Cloud Function for Golden HFEA Lite rebalancing
+    - --source=.
+    - --trigger-http
+    - --region=europe-west3
+    - --runtime=python310
+    - --timeout=540s
+    - --entry-point=rebalance_golden_hfea_lite  # Entry point function in your Python code
+    - --memory=512MB
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=1098661711782,GOOGLE_CLOUD_PROJECT_ID=trading-436516
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
+
   # Step 3: Deploy the monthly_buy_spxl
   - name: 'gcr.io/cloud-builders/gcloud'
     args:
@@ -188,6 +220,19 @@ steps:
       'scheduler', 'jobs', 'update', 'http', 'rebalance_hfea',
       '--schedule', '0 14 1-7 1,4,7,10 *',  
       '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/rebalance_hfea',
+      '--http-method', 'POST',
+      '--time-zone', 'America/New_York',
+      '--location', 'europe-west3',
+      '--oidc-service-account-email', '1098661711782-compute@developer.gserviceaccount.com'
+    ]
+    waitFor: ['-'] # start in parallel and actually needs to be set, otherwise deployment is sequential
+
+  # Create Cloud Scheduler job for 'rebalance_golden_hfea_lite' function
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'scheduler', 'jobs', 'update', 'http', 'rebalance_golden_hfea_lite',
+      '--schedule', '0 14 1-7 1,4,7,10 *',  
+      '--uri', 'https://europe-west3-trading-436516.cloudfunctions.net/rebalance_golden_hfea_lite',
       '--http-method', 'POST',
       '--time-zone', 'America/New_York',
       '--location', 'europe-west3',

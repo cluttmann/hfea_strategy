@@ -4,8 +4,9 @@ This project contains a set of Python Cloud Functions for managing a multi-strat
 
 ## Portfolio Allocation
 
-The current portfolio is allocated across five strategies:
-- **HFEA Strategy**: 37.5%
+The current portfolio is allocated across six strategies:
+- **HFEA Strategy**: 18.75%
+- **Golden HFEA Lite Strategy**: 18.75%
 - **SPXL SMA Strategy**: 37.5%
 - **9-Sig Strategy**: 5%
 - **Dual Momentum Strategy**: 10%
@@ -13,7 +14,7 @@ The current portfolio is allocated across five strategies:
 
 ## Overview of the Strategies
 
-The project is based on five distinct investment strategies, each designed to maximize returns by leveraging specific market behaviors and signals.
+The project is based on six distinct investment strategies, each designed to maximize returns by leveraging specific market behaviors and signals.
 
 ### 1. High-Frequency Equity Allocation (HFEA) Strategy
 
@@ -39,21 +40,46 @@ This three-asset approach was selected based on research from the r/LETFs commun
 This implementation is based on extensive backtesting and research from:
 - [r/LETFs 2024 Best Portfolio Competition Results](https://www.reddit.com/r/LETFs/comments/1dyl49a/2024_rletfs_best_portfolio_competition_results/)
 
-### 4. Dual Momentum Strategy (Gary Antonacci)
+### 2. Golden HFEA Lite Strategy
+
+#### **Strategy Overview:**
+The Golden HFEA Lite strategy is a classic leveraged ETF portfolio that combines equity exposure, bond protection, and gold diversification. This strategy uses a balanced allocation across three key asset classes:
+- **SSO** (2x leveraged S&P 500) - 50% allocation
+- **ZROZ** (Long-term U.S. Treasury bonds) - 25% allocation  
+- **GLD** (Gold ETF) - 25% allocation
+
+This three-asset approach provides exposure to equity growth through leveraged S&P 500 exposure, downside protection through long-term treasury bonds, and diversification through gold's uncorrelated returns. The strategy is designed to capture the benefits of the classic "Golden Butterfly" portfolio with leveraged equity exposure for enhanced returns.
+
+#### **Approach in the Script:**
+- **Monthly Buys**: The script uses the same sophisticated underweight-based allocation system as HFEA. It calculates which assets are underweight relative to their target allocations (50% SSO, 25% ZROZ, 25% GLD) and allocates the monthly investment proportionally to bring the portfolio back towards target. This approach automatically rebalances during monthly contributions.
+  
+- **Quarterly Rebalancing**: The script includes a quarterly rebalancing function that ensures the portfolio remains aligned with the 50/25/25 target allocation. Rebalancing involves selling portions of over-performing ETFs and buying under-performing ones through a series of paired trades, ensuring the portfolio stays on track with the strategy's risk and return profile.
+
+#### **Expected Returns (CAGR):**
+- The Golden HFEA Lite strategy aims to provide strong risk-adjusted returns through the combination of leveraged equity exposure, bond stability, and gold diversification.
+- **Historical Performance**: This allocation has shown strong performance in various market conditions, with gold providing diversification during equity downturns and bonds providing stability during market stress.
+- The 2x leverage on equities provides enhanced returns during bull markets while the 25% allocation to bonds and gold provides downside protection and diversification benefits.
+
+#### **Research Sources:**
+This implementation is based on the classic "Golden Butterfly" portfolio concept adapted for leveraged ETFs:
+- [Golden Butterfly Portfolio](https://portfoliocharts.com/portfolio/golden-butterfly/) - Original portfolio concept
+- [Leveraged ETF Portfolio Strategies](https://www.reddit.com/r/LETFs/) - Community discussions on leveraged implementations
+
+### 3. Dual Momentum Strategy (Gary Antonacci)
 
 #### **Strategy Overview:**
 The Dual Momentum strategy, developed by Gary Antonacci, is a sophisticated tactical asset allocation approach that combines two momentum principles:
-- **Relative Momentum**: Comparing performance between two assets (SSO vs EFO)
+- **Relative Momentum**: Comparing performance between two assets (SPUU vs EFO)
 - **Absolute Momentum**: Determining if the winner has positive trend (> 0% return)
 
 This strategy uses leveraged ETFs for enhanced returns:
-- **SSO** (ProShares Ultra S&P 500) - 2x leveraged S&P 500
+- **SPUU** (ProShares Ultra S&P 500) - 2x leveraged S&P 500
 - **EFO** (ProShares Ultra MSCI EAFE) - 2x leveraged international developed markets
 - **BND** (Vanguard Total Bond Market ETF) - Safety asset during downtrends
 
 #### **Approach in the Script:**
 - **Monthly Rebalancing**: On the first trading day of each month, the strategy:
-  1. Calculates 12-month returns (252 trading days) for both SSO and EFO
+  1. Calculates 12-month returns (252 trading days) for both SPUU and EFO
   2. Identifies the relative momentum winner (higher return)
   3. Applies absolute momentum filter: if winner's return > 0%, invest in winner; otherwise invest in BND (bonds)
   4. Executes position switch if signal changes, or adds new investment to existing position
@@ -64,13 +90,13 @@ This strategy uses leveraged ETFs for enhanced returns:
 
 #### **Expected Returns:**
 - The Dual Momentum strategy aims to capture the best-performing markets (US or International) during bull markets while providing crash protection by moving to bonds during bear markets.
-- **Historical Performance**: Based on [backtesting from 2007-2024](https://testfol.io/tactical?s=7U59rfzvUXJ) using leveraged ETFs (SSO/EFO/BND), the strategy has demonstrated strong risk-adjusted returns with reduced drawdowns compared to buy-and-hold approaches.
+- **Historical Performance**: Based on [backtesting from 2007-2024](https://testfol.io/tactical?s=7U59rfzvUXJ) using leveraged ETFs (SPUU/EFO/BND), the strategy has demonstrated strong risk-adjusted returns with reduced drawdowns compared to buy-and-hold approaches.
 - The combination of relative and absolute momentum helps avoid extended periods of negative returns while maintaining exposure to trending markets.
 - **Behavioral Edge**: The strategy exploits persistent momentum anomalies that arise from behavioral biases like herding and anchoring, which cause trends to persist for 3-12 months.
 
 #### **Research Sources:**
 This implementation is based on Gary Antonacci's research and community discussions:
-- [TestFol.io Backtest Results](https://testfol.io/tactical?s=7U59rfzvUXJ) - SSO/EFO/BND leveraged implementation
+- [TestFol.io Backtest Results](https://testfol.io/tactical?s=7U59rfzvUXJ) - SPUU/EFO/BND leveraged implementation
 - [r/LETFs: Combining Dual Momentum with LETFs](https://www.reddit.com/r/LETFs/comments/rwcoxk/combining_dual_momentum_with_the_principles_of/)
 - [r/LETFs: Leveraged Dual Momentum Backtest](https://www.reddit.com/r/LETFs/comments/1jj4tad/leveraged_dual_momentum_backtest/)
 
@@ -229,7 +255,7 @@ Result: Hold TQQQ position during market crash
 
 - **9-Sig Strategy**: The 9-Sig strategy balances growth and risk management through systematic rebalancing and crash protection. While it uses leveraged ETFs (TQQQ), the monthly contributions to bonds and the "30 Down, Stick Around" rule provide significant downside protection. The strategy's systematic approach removes emotional decision-making and provides built-in risk management during market crashes.
 
-- **Dual Momentum Strategy**: The Dual Momentum strategy uses 2x leveraged ETFs (SSO/EFO) but includes built-in crash protection through its absolute momentum filter. When both markets show negative momentum, the strategy moves to BND (bonds), providing downside protection. The monthly rebalancing reduces whipsaw risk while the 12-month lookback period captures sustained trends. This strategy balances aggressive growth during bull markets with defensive positioning during bear markets.
+- **Dual Momentum Strategy**: The Dual Momentum strategy uses 2x leveraged ETFs (SPUU/EFO) but includes built-in crash protection through its absolute momentum filter. When both markets show negative momentum, the strategy moves to BND (bonds), providing downside protection. The monthly rebalancing reduces whipsaw risk while the 12-month lookback period captures sustained trends. This strategy balances aggressive growth during bull markets with defensive positioning during bear markets.
 
 ### **Investment Horizon:**
 - **HFEA Strategy**: Best suited for long-term investors who can afford to leave their investments untouched for several years, allowing the compounding effect to play out.
@@ -254,10 +280,11 @@ Result: Hold TQQQ position during market crash
 All five strategies offer unique ways to potentially enhance returns, but they come with their own sets of risks and assumptions. The HFEA strategy seeks to maximize growth through a balanced but leveraged approach, while the S&P 500 with 200-SMA strategy aims to capture market gains while avoiding major downturns. The 9-Sig strategy provides systematic growth with built-in crash protection and systematic rebalancing. The Dual Momentum strategy combines global diversification with momentum-based timing to capture trending markets while protecting capital during downturns. The Sector Momentum strategy exploits sector rotation cycles through multi-period momentum analysis with trend filtering.
 
 Together, these strategies provide a comprehensive blend of aggressive growth and risk management:
-- **HFEA (37.5%)**: Three-asset leveraged portfolio (UPRO 45%, TMF 25%, KMLM 30%) with enhanced diversification through managed futures exposure
+- **HFEA (18.75%)**: Three-asset leveraged portfolio (UPRO 45%, TMF 25%, KMLM 30%) with enhanced diversification through managed futures exposure
+- **Golden HFEA Lite (18.75%)**: Classic leveraged portfolio (SSO 50%, ZROZ 25%, GLD 25%) with equity exposure, bond protection, and gold diversification
 - **SPXL SMA (37.5%)**: Trend-following with market timing using 200-day SMA signals  
 - **9-Sig (5%)**: Systematic TQQQ/AGG growth with crash protection following Jason Kelly's methodology
-- **Dual Momentum (10%)**: Tactical allocation between SSO/EFO/BND using relative and absolute momentum
+- **Dual Momentum (10%)**: Tactical allocation between SPUU/EFO/BND using relative and absolute momentum
 - **Sector Momentum (10%)**: Multi-period momentum rotation across top 3 sector ETFs with SPY 200-SMA trend filtering
 
 Each strategy has been carefully selected and optimized based on historical backtests and current market research. The diversification across five different approaches—equity/bond/futures leverage, trend-following, systematic rebalancing, momentum-based tactical allocation, and sector rotation—helps reduce overall portfolio risk while maintaining strong growth potential.
@@ -304,7 +331,7 @@ Consider a loan with a duration of 6 to 8 years (50k to 100k) at around 4.5% int
   - **HFEA strategy**: Three-asset portfolio (UPRO/TMF/KMLM at 45/25/30) with monthly underweight-based buys and quarterly rebalancing
   - **SPXL SMA strategy**: Trend-following with 200-day SMA (monthly buys and daily trading)
   - **9-Sig strategy**: Jason Kelly methodology with monthly AGG contributions and quarterly TQQQ/AGG signals with crash protection
-  - **Dual Momentum strategy**: Tactical allocation between SSO/EFO/BND using 12-month relative and absolute momentum
+  - **Dual Momentum strategy**: Tactical allocation between SPUU/EFO/BND using 12-month relative and absolute momentum
   - **Unified index alert system**: Monitors multiple indices for ATH drops and SMA crossings
   - **Firestore integration**: Persistent storage for strategy balances, 9-Sig quarterly data, Dual Momentum position tracking, and unified market data cache
   - **Alpaca integration**: All market data fetched from Alpaca IEX feed (no yfinance dependency)
@@ -313,9 +340,11 @@ Consider a loan with a duration of 6 to 8 years (50k to 100k) at around 4.5% int
 - `README.md`: Comprehensive documentation of all strategies and setup instructions.
 
 ### **Cloud Functions Deployed:**
-- `monthly_invest_all`: **Orchestrator function (RECOMMENDED)** - Runs all five monthly strategies with coordinated budget calculations
+- `monthly_invest_all`: **Orchestrator function (RECOMMENDED)** - Runs all six monthly strategies with coordinated budget calculations
 - `monthly_buy_hfea`: HFEA monthly investment function (individual execution)
 - `rebalance_hfea`: HFEA quarterly rebalancing function
+- `monthly_buy_golden_hfea_lite`: Golden HFEA Lite monthly investment function (individual execution)
+- `rebalance_golden_hfea_lite`: Golden HFEA Lite quarterly rebalancing function
 - `monthly_buy_spxl`: SPXL SMA monthly investment function (individual execution)
 - `daily_trade_spxl_200sma`: SPXL SMA daily trading function
 - `monthly_nine_sig_contributions`: 9-Sig monthly contributions function (individual execution)
@@ -325,16 +354,16 @@ Consider a loan with a duration of 6 to 8 years (50k to 100k) at around 4.5% int
 - `index_alert`: Unified index alert system
 
 ### **Cloud Scheduler Jobs:**
-- **Monthly orchestrator**: First trading day of each month at 12:00 PM ET (`monthly_invest_all` - runs all five monthly strategies with coordinated budgets)
-- **Quarterly functions**: First trading day of each quarter at specified times (`rebalance_hfea` at 2:00 PM ET, `quarterly_nine_sig_signal` at 1:00 PM ET)
+- **Monthly orchestrator**: First trading day of each month at 12:00 PM ET (`monthly_invest_all` - runs all six monthly strategies with coordinated budgets)
+- **Quarterly functions**: First trading day of each quarter at specified times (`rebalance_hfea` at 2:00 PM ET, `rebalance_golden_hfea_lite` at 2:00 PM ET, `quarterly_nine_sig_signal` at 1:00 PM ET)
 - **Index alerts**: Hourly during trading hours (9:15 AM - 3:15 PM for SMA alerts, 9:30 AM - 3:30 PM for ATH drop alerts)
 - **Daily SMA functions**: 3:56 PM ET on weekdays (`daily_trade_spxl_200sma`)
 
-**Note**: Individual monthly functions (`monthly_buy_hfea`, `monthly_buy_spxl`, `monthly_nine_sig_contributions`, `monthly_dual_momentum`, `monthly_sector_momentum`) are deployed but not scheduled. They remain available for manual execution and debugging purposes. The `monthly_invest_all` orchestrator is used for production to ensure coordinated budget allocation and prevent over-spending.
+**Note**: Individual monthly functions (`monthly_buy_hfea`, `monthly_buy_golden_hfea_lite`, `monthly_buy_spxl`, `monthly_nine_sig_contributions`, `monthly_dual_momentum`, `monthly_sector_momentum`) are deployed but not scheduled. They remain available for manual execution and debugging purposes. The `monthly_invest_all` orchestrator is used for production to ensure coordinated budget allocation and prevent over-spending.
 
 ## Monthly Investment Orchestrator
 
-The `monthly_invest_all` orchestrator is a coordinated execution system that manages all four monthly investment strategies (HFEA, SPXL SMA, 9-Sig, and Dual Momentum) in a single unified process.
+The `monthly_invest_all` orchestrator is a coordinated execution system that manages all six monthly investment strategies (HFEA, Golden HFEA Lite, SPXL SMA, 9-Sig, Dual Momentum, and Sector Momentum) in a single unified process.
 
 ### **Why Use an Orchestrator?**
 
@@ -352,16 +381,18 @@ The orchestrator (`monthly_invest_all_strategies()` function):
 
 1. **Calculates budgets once**: Checks margin conditions and calculates total available buying power a single time
 2. **Distributes precisely**: Splits the total amount according to strategy allocations:
-   - HFEA: 42.5%
-   - SPXL SMA: 42.5%
+   - HFEA: 18.75%
+   - Golden HFEA Lite: 18.75%
+   - SPXL SMA: 37.5%
    - 9-Sig: 5%
    - Dual Momentum: 10%
+   - Sector Momentum: 10%
 3. **Passes pre-calculated amounts**: Each strategy receives its exact budget and margin conditions as parameters
 4. **Prevents over-spending**: Since budgets are pre-calculated, there's no risk of multiple strategies competing for the same funds
 
 ### **Key Features**
 
-- **Coordinated execution**: All four strategies run in sequence with shared context
+- **Coordinated execution**: All six strategies run in sequence with shared context
 - **Exact splits**: Portfolio allocation percentages are maintained precisely
 - **Single margin check**: Margin conditions evaluated once and shared across all strategies
 - **Unified reporting**: Consolidated Telegram notifications show the complete picture
@@ -521,7 +552,7 @@ margin_control_config = {
 
 **Dual Momentum Strategy:**
 - Portfolio allocation: 10% of total monthly investment
-- Asset universe: SSO (2x S&P 500), EFO (2x MSCI EAFE), BND (bonds)
+- Asset universe: SPUU (2x S&P 500), EFO (2x MSCI EAFE), BND (bonds)
 - Momentum lookback: 12 months (252 trading days)
 - Rebalancing frequency: Monthly (first trading day)
 - Decision logic: Invest in relative momentum winner if positive, otherwise BND
@@ -542,10 +573,10 @@ margin_control_config = {
 
 **Dual Momentum Tracking (in strategy-balances/dual_momentum):**
   - `total_invested`: Cumulative cash contributions to strategy
-  - `current_position`: Current holding (SSO, EFO, or BND)
+  - `current_position`: Current holding (SPUU, EFO, or BND)
   - `shares_held`: Number of shares in current position
   - `last_trade_date`: Date of last position change
-  - `last_momentum_check`: Detailed momentum calculations (SSO/EFO returns, winner, signal)
+  - `last_momentum_check`: Detailed momentum calculations (SPUU/EFO returns, winner, signal)
 
 ### **Trading Platform:**
 - **Alpaca API**: Live and paper trading environments supported

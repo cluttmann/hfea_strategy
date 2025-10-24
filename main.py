@@ -16,7 +16,8 @@ app = Flask(__name__)
 # Strategy allocation percentages for dynamic monthly investment calculation
 # Investment amounts are calculated dynamically each month based on available cash and margin
 strategy_allocations = {
-    "hfea_allo": 0.375,      # 37.5% to HFEA (reduced from 42.5%)
+    "hfea_allo": 0.1875,     # 18.75% to HFEA (reduced from 37.5%)
+    "golden_hfea_lite_allo": 0.1875,  # 18.75% to Golden HFEA Lite
     "spxl_allo": 0.375,      # 37.5% to SPXL SMA (reduced from 42.5%)
     "nine_sig_allo": 0.05,   # 5% to 9-Sig strategy
     "dual_momentum_allo": 0.10,  # 10% to Dual Momentum strategy
@@ -32,6 +33,11 @@ tmf_allocation = 0.25
 kmlm_allocation = 0.3
 # Based on this https://www.reddit.com/r/LETFs/comments/1dyl49a/2024_rletfs_best_portfolio_competition_results/
 # and this: https://testfol.io/?d=eJyNT9tKw0AQ%2FZUyzxGStBUaEEGkL1otog8iJYzJJF072a2TtbWE%2FLsTQy8igss%2B7M45cy4NlOxekecoWNWQNFB7FJ%2Fm6AkSiCaT0VkY6YUAyOb7eRzGx3m%2FsUGGJAr1BID5W2psweiNs5AUyDUFkGG9LNhtIQmPn7QQelfFZ0LhnaqJYza2TLfG5h33PGwDWDvxhWPjNOJLAxarLsUV2WxZoax0zdgN1f7abEyuOZXm5UM9hbQc2oymvc2ds6Rsb7IVSS%2FWvxWr1zsvCq5JMrL%2Bu027CCAXLDVzGxyMn%2BYP94Ob2e1s8Dib%2Ft%2F80PFv%2B0u%2BGJ5GGI072wNnVXH1eYoPwx%2B4Z%2F9bIx6ftli0X39%2BpPY%3D
+
+# Golden HFEA Lite allocation (SSO/ZROZ/GLD at 50/25/25)
+sso_allocation = 0.50
+zroz_allocation = 0.25
+gld_allocation = 0.25
 
 alpaca_environment = "live"
 margin = 0.01  # band around the 200sma to avoid too many trades
@@ -1093,6 +1099,159 @@ def make_monthly_nine_sig_contributions(api, force_execute=False, investment_cal
         return error_msg
 
 
+def make_monthly_buys_golden_hfea_lite(api, force_execute=False, investment_calc=None, margin_result=None, skip_order_wait=False, env="live"):
+    """
+    Make monthly Golden HFEA Lite purchases with margin-aware logic and dynamic investment amounts.
+    Uses All-or-Nothing approach: invest full amount or skip entirely.
+    
+    Args:
+        api: Alpaca API credentials
+        force_execute: Bypass trading day check for testing
+        investment_calc: Pre-calculated investment amounts (from orchestrator) - optional
+        margin_result: Pre-calculated margin conditions (from orchestrator) - optional
+    """
+    if not force_execute and not check_trading_day(mode="monthly"):
+        print("Not first trading day of the month")
+        return "Not first trading day of the month"
+    
+    if force_execute:
+        print("Golden HFEA Lite: Force execution enabled - bypassing trading day check")
+        send_telegram_message("Golden HFEA Lite: Force execution enabled for testing - bypassing trading day check")
+    
+    # If not provided by orchestrator, calculate independently
+    if margin_result is None:
+        margin_result = check_margin_conditions(api)
+    
+    if investment_calc is None:
+        investment_calc = calculate_monthly_investments(api, margin_result, env)
+    
+    investment_amount = investment_calc["strategy_amounts"]["golden_hfea_lite_allo"]
+    
+    target_margin = margin_result["target_margin"]
+    metrics = margin_result["metrics"]
+    leverage = metrics.get("leverage", 1.0)
+    
+    # Determine available buying power (already calculated in investment_calc)
+    # buying_power = investment_calc["total_available"] + investment_calc["margin_approved"]
+    
+    # Check if we should skip investment
+    if not target_margin and leverage > 1.0:
+        print("Golden HFEA Lite: Skipping investment - margin disabled and still leveraged")
+        send_telegram_message("Golden HFEA Lite: Skipping investment - margin disabled and still leveraged")
+        return "Golden HFEA Lite: Skipping investment - margin disabled and still leveraged"
+    
+    if investment_amount < margin_control_config["min_investment"]:
+        print(f"Golden HFEA Lite: Skipping investment - amount ${investment_amount:.2f} below minimum")
+        send_telegram_message(f"Golden HFEA Lite: Skipping investment - amount ${investment_amount:.2f} below minimum")
+        return "Golden HFEA Lite: Skipping investment - amount below minimum"
+    
+    # Get current Golden HFEA Lite allocations
+    (
+        sso_diff,
+        zroz_diff,
+        gld_diff,
+        sso_value,
+        zroz_value,
+        gld_value,
+        total_value,
+        target_sso_value,
+        target_zroz_value,
+        target_gld_value,
+        current_sso_percent,
+        current_zroz_percent,
+        current_gld_percent,
+    ) = get_golden_hfea_lite_allocations(api)
+
+    # Calculate underweight amounts
+    sso_underweight = max(0, target_sso_value - sso_value)
+    zroz_underweight = max(0, target_zroz_value - zroz_value)
+    gld_underweight = max(0, target_gld_value - gld_value)
+    total_underweight = sso_underweight + zroz_underweight + gld_underweight
+
+    # If perfectly balanced, use standard split
+    if total_underweight == 0:
+        sso_amount = investment_amount * sso_allocation
+        zroz_amount = investment_amount * zroz_allocation
+        gld_amount = investment_amount * gld_allocation
+    else:
+        # Allocate proportionally based on underweight amounts
+        sso_amount = (sso_underweight / total_underweight) * investment_amount
+        zroz_amount = (zroz_underweight / total_underweight) * investment_amount
+        gld_amount = (gld_underweight / total_underweight) * investment_amount
+
+    # Get current prices for SSO, ZROZ, and GLD
+    sso_price = float(get_latest_trade(api, "SSO"))
+    zroz_price = float(get_latest_trade(api, "ZROZ"))
+    gld_price = float(get_latest_trade(api, "GLD"))
+
+    # Calculate number of shares to buy
+    sso_shares_to_buy = sso_amount / sso_price
+    zroz_shares_to_buy = zroz_amount / zroz_price
+    gld_shares_to_buy = gld_amount / gld_price
+
+    # Load current strategy state from Firestore
+    balances = load_balances(env)
+    golden_hfea_lite_data = balances.get("golden_hfea_lite", {})
+    total_invested = golden_hfea_lite_data.get("total_invested", 0)
+    current_positions = golden_hfea_lite_data.get("current_positions", {})
+    
+    print(f"Golden HFEA Lite Strategy - Investment: ${investment_amount:.2f}")
+    print(f"Current positions: {current_positions}")
+    print(f"Total invested: ${total_invested:.2f}")
+    
+    # Execute market orders with enhanced tracking
+    shares_bought = []
+    trades_executed = []
+    
+    for symbol, qty, amount in [("SSO", sso_shares_to_buy, sso_amount), ("ZROZ", zroz_shares_to_buy, zroz_amount), ("GLD", gld_shares_to_buy, gld_amount)]:
+        if qty > 0:
+            try:
+                order = submit_order(api, symbol, qty, "buy")
+                if not skip_order_wait:
+                    wait_for_order_fill(api, order["id"])
+                
+                shares_bought.append(qty)
+                trades_executed.append(f"Bought {qty:.6f} shares of {symbol} for ${amount:.2f}")
+                print(f"Bought {qty:.6f} shares of {symbol} for ${amount:.2f}")
+                send_telegram_message(f"Golden HFEA Lite: Bought {qty:.6f} shares of {symbol} for ${amount:.2f}")
+                
+            except Exception as e:
+                error_msg = f"Golden HFEA Lite: Failed to buy {symbol}: {str(e)}"
+                print(error_msg)
+                send_telegram_message(error_msg)
+                return error_msg
+    
+    if trades_executed:
+        # Update Firestore with new positions
+        total_invested += investment_amount
+        current_positions.update({
+            "SSO": current_positions.get("SSO", 0) + sso_shares_to_buy,
+            "ZROZ": current_positions.get("ZROZ", 0) + zroz_shares_to_buy,
+            "GLD": current_positions.get("GLD", 0) + gld_shares_to_buy
+        })
+        
+        save_balance("golden_hfea_lite", {
+            "total_invested": total_invested,
+            "current_positions": current_positions,
+            "last_updated": datetime.datetime.utcnow().isoformat()
+        }, env)
+        
+        # Send summary message
+        summary_msg = f"Golden HFEA Lite Monthly Investment Complete:\n"
+        summary_msg += f"Total invested: ${total_invested:.2f}\n"
+        summary_msg += f"Trades executed: {len(trades_executed)}\n"
+        for trade in trades_executed:
+            summary_msg += f"  {trade}\n"
+        
+        send_telegram_message(summary_msg)
+    
+    # Send margin summary
+    action_taken = f"Invested ${investment_amount:.2f}" if trades_executed else "Skipped investment"
+    send_margin_summary_message(margin_result, "Golden HFEA Lite", action_taken, investment_calc)
+    
+    return "Monthly investment executed."
+
+
 def make_monthly_buys(api, force_execute=False, investment_calc=None, margin_result=None, skip_order_wait=False, env="live"):
     """
     Make monthly HFEA purchases with margin-aware logic and dynamic investment amounts.
@@ -1317,6 +1476,167 @@ def get_hfea_allocations(api):
         current_tmf_percent,
         current_kmlm_percent,
     )
+
+
+def get_golden_hfea_lite_allocations(api):
+    """
+    Get Golden HFEA Lite allocations (SSO/ZROZ/GLD at 50/25/25).
+    Returns current values, percentages, target values, and deviations.
+    """
+    positions = {p["symbol"]: float(p["market_value"]) for p in list_positions(api)}
+    sso_value = positions.get("SSO", 0)
+    zroz_value = positions.get("ZROZ", 0)
+    gld_value = positions.get("GLD", 0)
+    total_value = sso_value + zroz_value + gld_value
+    
+    # Calculate current and target allocations
+    current_sso_percent = sso_value / total_value if total_value else 0
+    current_zroz_percent = zroz_value / total_value if total_value else 0
+    current_gld_percent = gld_value / total_value if total_value else 0
+    target_sso_value = total_value * sso_allocation
+    target_zroz_value = total_value * zroz_allocation
+    target_gld_value = total_value * gld_allocation
+    
+    # Calculate deviations
+    sso_diff = sso_value - target_sso_value
+    zroz_diff = zroz_value - target_zroz_value
+    gld_diff = gld_value - target_gld_value
+    
+    return (
+        sso_diff,
+        zroz_diff,
+        gld_diff,
+        sso_value,
+        zroz_value,
+        gld_value,
+        total_value,
+        target_sso_value,
+        target_zroz_value,
+        target_gld_value,
+        current_sso_percent,
+        current_zroz_percent,
+        current_gld_percent,
+    )
+
+
+def rebalance_golden_hfea_lite_portfolio(api):
+    """
+    Rebalance Golden HFEA Lite portfolio (SSO/ZROZ/GLD at 50/25/25) quarterly.
+    Executes on first trading day of each quarter.
+    """
+    if not check_trading_day(mode="quarterly"):
+        print("Not first trading day of the month in this Quarter")
+        return "Not first trading day of the month in this Quarter"
+    
+    # Get SSO, ZROZ, and GLD values and deviations from target allocation
+    (
+        sso_diff,
+        zroz_diff,
+        gld_diff,
+        sso_value,
+        zroz_value,
+        gld_value,
+        total_value,
+        target_sso_value,
+        target_zroz_value,
+        target_gld_value,
+        current_sso_percent,
+        current_zroz_percent,
+        current_gld_percent,
+    ) = get_golden_hfea_lite_allocations(api)
+
+    # Apply a margin for fees (e.g., 0.5%)
+    fee_margin = 0.995
+
+    # If the total value is 0, nothing to rebalance
+    if total_value == 0:
+        print("No holdings to rebalance for Golden HFEA Lite.")
+        send_telegram_message("No holdings to rebalance for Golden HFEA Lite Strategy.")
+        return "No holdings to rebalance for Golden HFEA Lite Strategy."
+
+    # Define trade parameters for each ETF
+    rebalance_actions = []
+
+    # If SSO is over-allocated, adjust ZROZ or GLD if under-allocated
+    if sso_diff > 0:
+        if zroz_diff < 0:
+            sso_shares_to_sell = min(sso_diff, abs(zroz_diff)) / float(get_latest_trade(api, "SSO"))
+            zroz_shares_to_buy = (
+                sso_shares_to_sell
+                * float(get_latest_trade(api, "SSO"))
+                / float(get_latest_trade(api, "ZROZ"))
+            ) * fee_margin
+            rebalance_actions.append(("SSO", sso_shares_to_sell, "sell"))
+            rebalance_actions.append(("ZROZ", zroz_shares_to_buy, "buy"))
+
+        if gld_diff < 0:
+            sso_shares_to_sell = min(sso_diff, abs(gld_diff)) / float(get_latest_trade(api, "SSO"))
+            gld_shares_to_buy = (
+                sso_shares_to_sell
+                * float(get_latest_trade(api, "SSO"))
+                / float(get_latest_trade(api, "GLD"))
+            ) * fee_margin
+            rebalance_actions.append(("SSO", sso_shares_to_sell, "sell"))
+            rebalance_actions.append(("GLD", gld_shares_to_buy, "buy"))
+
+    # If ZROZ is over-allocated, adjust SSO or GLD if under-allocated
+    if zroz_diff > 0:
+        if sso_diff < 0:
+            zroz_shares_to_sell = min(zroz_diff, abs(sso_diff)) / float(get_latest_trade(api, "ZROZ"))
+            sso_shares_to_buy = (
+                zroz_shares_to_sell
+                * float(get_latest_trade(api, "ZROZ"))
+                / float(get_latest_trade(api, "SSO"))
+            ) * fee_margin
+            rebalance_actions.append(("ZROZ", zroz_shares_to_sell, "sell"))
+            rebalance_actions.append(("SSO", sso_shares_to_buy, "buy"))
+
+        if gld_diff < 0:
+            zroz_shares_to_sell = min(zroz_diff, abs(gld_diff)) / float(get_latest_trade(api, "ZROZ"))
+            gld_shares_to_buy = (
+                zroz_shares_to_sell
+                * float(get_latest_trade(api, "ZROZ"))
+                / float(get_latest_trade(api, "GLD"))
+            ) * fee_margin
+            rebalance_actions.append(("ZROZ", zroz_shares_to_sell, "sell"))
+            rebalance_actions.append(("GLD", gld_shares_to_buy, "buy"))
+
+    # If GLD is over-allocated, adjust SSO or ZROZ if under-allocated
+    if gld_diff > 0:
+        if sso_diff < 0:
+            gld_shares_to_sell = min(gld_diff, abs(sso_diff)) / float(get_latest_trade(api, "GLD"))
+            sso_shares_to_buy = (
+                gld_shares_to_sell
+                * float(get_latest_trade(api, "GLD"))
+                / float(get_latest_trade(api, "SSO"))
+            ) * fee_margin
+            rebalance_actions.append(("GLD", gld_shares_to_sell, "sell"))
+            rebalance_actions.append(("SSO", sso_shares_to_buy, "buy"))
+
+        if zroz_diff < 0:
+            gld_shares_to_sell = min(gld_diff, abs(zroz_diff)) / float(get_latest_trade(api, "GLD"))
+            zroz_shares_to_buy = (
+                gld_shares_to_sell
+                * float(get_latest_trade(api, "GLD"))
+                / float(get_latest_trade(api, "ZROZ"))
+            ) * fee_margin
+            rebalance_actions.append(("GLD", gld_shares_to_sell, "sell"))
+            rebalance_actions.append(("ZROZ", zroz_shares_to_buy, "buy"))
+
+    # Execute rebalancing actions
+    for symbol, qty, action in rebalance_actions:
+        if qty > 0:
+            order = submit_order(api, symbol, qty, action)
+            action_verb = "Bought" if action == "buy" else "Sold"
+            wait_for_order_fill(api, order["id"])
+            print(f"Golden HFEA Lite: {action_verb} {qty:.6f} shares of {symbol} to rebalance.")
+            send_telegram_message(
+                f"Golden HFEA Lite: {action_verb} {qty:.6f} shares of {symbol} to rebalance."
+            )
+
+    # Report completion of rebalancing check
+    print("Golden HFEA Lite rebalance check completed.")
+    return "Golden HFEA Lite rebalance executed."
 
 
 def rebalance_portfolio(api):
@@ -2518,7 +2838,7 @@ def get_dual_momentum_position_value(api):
     """
     try:
         positions = api.list_positions()
-        dual_momentum_symbols = ["SSO", "EFO", "BND"]
+        dual_momentum_symbols = ["SPUU", "EFO", "BND"]
         
         total_value = 0
         current_position = None
@@ -2780,9 +3100,9 @@ def get_sector_momentum_value(api):
 
 def monthly_dual_momentum_strategy(api, force_execute=False, investment_calc=None, margin_result=None, skip_order_wait=False, env="live"):
     """
-    Dual Momentum Strategy implementation with SSO/EFO/BND.
+    Dual Momentum Strategy implementation with SPUU/EFO/BND.
     
-    Combines relative momentum (SSO vs EFO) and absolute momentum (winner > 0%).
+    Combines relative momentum (SPUU vs EFO) and absolute momentum (winner > 0%).
     Handles both monthly contributions and position switching.
     
     Args:
@@ -2822,21 +3142,21 @@ def monthly_dual_momentum_strategy(api, force_execute=False, investment_calc=Non
     print(f"Current position: {current_position}, Shares: {shares_held:.4f}")
     print(f"Total invested: ${total_invested:.2f}")
     
-    # Calculate 12-month returns for SSO and EFO
+    # Calculate 12-month returns for SPUU and EFO
     print("Calculating 12-month momentum...")
-    sso_return = calculate_12_month_returns(api, "SSO")
+    spuu_return = calculate_12_month_returns(api, "SPUU")
     efo_return = calculate_12_month_returns(api, "EFO")
     
-    if sso_return is None or efo_return is None:
+    if spuu_return is None or efo_return is None:
         error_msg = "Failed to calculate momentum returns - skipping strategy"
         print(error_msg)
         send_telegram_message(f"Dual Momentum Error: {error_msg}")
         return error_msg
     
     # Determine relative momentum winner
-    if sso_return > efo_return:
-        winner = "SSO"
-        winner_return = sso_return
+    if spuu_return > efo_return:
+        winner = "SPUU"
+        winner_return = spuu_return
     else:
         winner = "EFO"
         winner_return = efo_return
@@ -2847,7 +3167,7 @@ def monthly_dual_momentum_strategy(api, force_execute=False, investment_calc=Non
     else:
         target_position = "BND"
     
-    print(f"SSO 12-month return: {sso_return:.2%}")
+    print(f"SPUU 12-month return: {spuu_return:.2%}")
     print(f"EFO 12-month return: {efo_return:.2%}")
     print(f"Winner: {winner} ({winner_return:.2%})")
     print(f"Target position: {target_position}")
@@ -2890,7 +3210,7 @@ def monthly_dual_momentum_strategy(api, force_execute=False, investment_calc=Non
                 # Enhanced Telegram message with detailed decision rationale
                 telegram_msg = f"🎯 Dual Momentum Strategy Decision\n\n"
                 telegram_msg += f"📊 Momentum Analysis:\n"
-                telegram_msg += f"• SSO 12-month return: {sso_return:.2%}\n"
+                telegram_msg += f"• SPUU 12-month return: {spuu_return:.2%}\n"
                 telegram_msg += f"• EFO 12-month return: {efo_return:.2%}\n"
                 telegram_msg += f"• Relative winner: {winner} ({winner_return:.2%})\n\n"
                 telegram_msg += f"🎯 Decision Logic:\n"
@@ -2916,7 +3236,7 @@ def monthly_dual_momentum_strategy(api, force_execute=False, investment_calc=Non
                     "shares_held": shares_to_buy,
                     "last_trade_date": datetime.datetime.now().strftime("%Y-%m-%d"),
                     "last_momentum_check": {
-                        "sso_return": sso_return,
+                        "spuu_return": spuu_return,
                         "efo_return": efo_return,
                         "winner": winner,
                         "signal": target_position
@@ -2952,7 +3272,7 @@ def monthly_dual_momentum_strategy(api, force_execute=False, investment_calc=Non
                     "shares_held": new_total_shares,
                     "last_trade_date": datetime.datetime.now().strftime("%Y-%m-%d"),
                     "last_momentum_check": {
-                        "sso_return": sso_return,
+                        "spuu_return": spuu_return,
                         "efo_return": efo_return,
                         "winner": winner,
                         "signal": target_position
@@ -2977,7 +3297,7 @@ def monthly_dual_momentum_strategy(api, force_execute=False, investment_calc=Non
     summary_msg += f"📈 Current Value: ${final_position_value['total_value']:.2f}\n"
     summary_msg += f"📊 Strategy Return: {strategy_return:.2%}\n\n"
     summary_msg += f"🔍 Decision Recap:\n"
-    summary_msg += f"• SSO Return: {sso_return:.2%}\n"
+    summary_msg += f"• SPUU Return: {spuu_return:.2%}\n"
     summary_msg += f"• EFO Return: {efo_return:.2%}\n"
     summary_msg += f"• Winner: {winner} ({winner_return:.2%})\n"
     summary_msg += f"• Final Choice: {target_position} {'(momentum winner)' if target_position == winner else '(safety bonds)'}"
@@ -3309,7 +3629,8 @@ def monthly_invest_all_strategies(api, force_execute=False, skip_order_wait=Fals
     investment_calc = calculate_monthly_investments(api, margin_result, env)
     
     print(f"Total investing power: ${investment_calc['total_investing']:.2f}")
-    print(f"  HFEA (37.5%): ${investment_calc['strategy_amounts']['hfea_allo']:.2f}")
+    print(f"  HFEA (18.75%): ${investment_calc['strategy_amounts']['hfea_allo']:.2f}")
+    print(f"  Golden HFEA Lite (18.75%): ${investment_calc['strategy_amounts']['golden_hfea_lite_allo']:.2f}")
     print(f"  SPXL (37.5%): ${investment_calc['strategy_amounts']['spxl_allo']:.2f}")
     print(f"  9-Sig (5%): ${investment_calc['strategy_amounts']['nine_sig_allo']:.2f}")
     print(f"  Dual Momentum (10%): ${investment_calc['strategy_amounts']['dual_momentum_allo']:.2f}")
@@ -3320,6 +3641,9 @@ def monthly_invest_all_strategies(api, force_execute=False, skip_order_wait=Fals
     
     print("\n=== Executing HFEA ===")
     results["hfea"] = make_monthly_buys(api, force_execute, investment_calc, margin_result, skip_order_wait, env)
+    
+    print("\n=== Executing Golden HFEA Lite ===")
+    results["golden_hfea_lite"] = make_monthly_buys_golden_hfea_lite(api, force_execute, investment_calc, margin_result, skip_order_wait, env)
     
     print("\n=== Executing SPXL SMA ===")
     results["spxl"] = monthly_buying_sma(api, "SPXL", force_execute, investment_calc, margin_result, skip_order_wait, env)
@@ -3365,6 +3689,18 @@ def rebalance_hfea(request):
     return rebalance_portfolio(api)
 
 
+@app.route("/monthly_buy_golden_hfea_lite", methods=["POST"])
+def monthly_buy_golden_hfea_lite(request):
+    api = set_alpaca_environment(env=alpaca_environment)
+    return make_monthly_buys_golden_hfea_lite(api)
+
+
+@app.route("/rebalance_golden_hfea_lite", methods=["POST"])
+def rebalance_golden_hfea_lite(request):
+    api = set_alpaca_environment(env=alpaca_environment)
+    return rebalance_golden_hfea_lite_portfolio(api)
+
+
 @app.route("/monthly_nine_sig_contributions", methods=["POST"])
 def monthly_nine_sig_contributions(request):
     api = set_alpaca_environment(env=alpaca_environment)
@@ -3401,7 +3737,7 @@ def daily_trade_spxl_200sma(request):
 def monthly_dual_momentum(request):
     """
     Cloud Function endpoint for Dual Momentum Strategy.
-    Executes monthly dual momentum strategy with SSO/EFO/BND.
+    Executes monthly dual momentum strategy with SPUU/EFO/BND.
     """
     try:
         api = set_alpaca_environment(env=alpaca_environment)
@@ -3460,6 +3796,10 @@ def run_local(action, env="paper", request="test", force_execute=False):
         return make_monthly_buys(api, force_execute=force_execute)
     elif action == "rebalance_hfea":
         return rebalance_portfolio(api)
+    elif action == "monthly_buy_golden_hfea_lite":
+        return make_monthly_buys_golden_hfea_lite(api, force_execute=force_execute)
+    elif action == "rebalance_golden_hfea_lite":
+        return rebalance_golden_hfea_lite_portfolio(api)
     elif action == "monthly_nine_sig_contributions":
         return make_monthly_nine_sig_contributions(api, force_execute=force_execute)
     elif action == "quarterly_nine_sig_signal":
@@ -3490,6 +3830,8 @@ if __name__ == "__main__":
             "monthly_invest_all",
             "monthly_buy_hfea",
             "rebalance_hfea",
+            "monthly_buy_golden_hfea_lite",
+            "rebalance_golden_hfea_lite",
             "monthly_nine_sig_contributions",
             "quarterly_nine_sig_signal",
             "monthly_buy_spxl",
