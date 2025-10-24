@@ -2183,7 +2183,7 @@ def monthly_buying_sma(api, symbol, force_execute=False, investment_calc=None, m
             if invested_amount is None:
                 invested_amount = 0
             updated_balance = investment_amount + invested_amount
-            save_balance(symbol + "_SMA", updated_balance)
+            save_balance(symbol + "_SMA", {"invested": updated_balance})
             
             action_taken = f"Skipped (SMA bearish) - Added ${investment_amount:.2f} to Firestore. Total reserved: ${updated_balance:.2f}"
             send_margin_summary_message(margin_result, f"{symbol} SMA", action_taken, investment_calc)
@@ -2226,7 +2226,26 @@ def daily_trade_sma(api, symbol):
             )
             # Wait for the sell order to be filled
             wait_for_order_fill(api, sell_order["id"])
-            save_balance(symbol + "_SMA", invested)
+            
+            # Update Firestore with comprehensive tracking (preserve rich structure)
+            existing_data = load_balances().get(f"{symbol}_SMA", {})
+            save_balance(symbol + "_SMA", {
+                "total_invested": invested,
+                "current_shares": 0,  # Sold all shares
+                "last_trade_date": datetime.datetime.now().strftime("%Y-%m-%d"),
+                "last_trade": {
+                    "action": "sell",
+                    "shares": shares_to_sell,
+                    "price": invested / shares_to_sell if shares_to_sell > 0 else 0,
+                    "amount": invested
+                },
+                "trend_analysis": {
+                    "spy_price": latest_price,
+                    "spy_sma_200": sma_200,
+                    "trend_status": "bearish",
+                    "margin_band": margin
+                }
+            })
         else:
             send_telegram_message(
                 f"Index is significantly below 200-SMA and no {symbol} position to sell."
@@ -2246,24 +2265,72 @@ def daily_trade_sma(api, symbol):
             positions = list_positions(api)
             position = next((p for p in positions if p["symbol"] == symbol), None)
             invested = float(position["market_value"])
-            save_balance(symbol + "_SMA", invested)
+            current_shares = float(position["qty"]) if position else 0
+            
+            # Update Firestore with comprehensive tracking (preserve rich structure)
+            save_balance(symbol + "_SMA", {
+                "total_invested": invested,
+                "current_shares": current_shares,
+                "last_trade_date": datetime.datetime.now().strftime("%Y-%m-%d"),
+                "last_trade": {
+                    "action": "buy",
+                    "shares": shares_to_buy,
+                    "price": price,
+                    "amount": invested_amount
+                },
+                "trend_analysis": {
+                    "spy_price": latest_price,
+                    "spy_sma_200": sma_200,
+                    "trend_status": "bullish",
+                    "margin_band": margin
+                }
+            })
             send_telegram_message(
                 f"Bought {shares_to_buy:.6f} shares of {symbol} with available cash"
             )
             return f"Bought {shares_to_buy:.6f} shares of {symbol} with available cash."
         else:
+            # Position exists but no new shares bought - no notification needed
+            # Update Firestore with current position data (preserve rich structure)
             invested = float(position["market_value"]) if position else 0
-            save_balance(symbol + "_SMA", invested)
-            send_telegram_message(
-                f"Index is above 200-SMA. No {symbol} shares bought because of no cash but {invested} is already invested"
-            )
+            current_shares = float(position["qty"]) if position else 0
+            
+            # Load existing data to preserve other fields
+            existing_data = load_balances().get(f"{symbol}_SMA", {})
+            save_balance(symbol + "_SMA", {
+                "total_invested": invested,
+                "current_shares": current_shares,
+                "last_trade_date": existing_data.get("last_trade_date", datetime.datetime.now().strftime("%Y-%m-%d")),
+                "last_trade": existing_data.get("last_trade", {}),
+                "trend_analysis": {
+                    "spy_price": latest_price,
+                    "spy_sma_200": sma_200,
+                    "trend_status": "bullish",
+                    "margin_band": margin
+                }
+            })
             return f"Index is above 200-SMA. No {symbol} shares bought because of no cash but {invested} is already invested"
     else:
         positions = list_positions(api)
         position = next((p for p in positions if p["symbol"] == symbol), None)
         if position:
             invested = float(position["market_value"])
-            save_balance(symbol + "_SMA", invested)
+            current_shares = float(position["qty"])
+            
+            # Load existing data to preserve other fields
+            existing_data = load_balances().get(f"{symbol}_SMA", {})
+            save_balance(symbol + "_SMA", {
+                "total_invested": invested,
+                "current_shares": current_shares,
+                "last_trade_date": existing_data.get("last_trade_date", datetime.datetime.now().strftime("%Y-%m-%d")),
+                "last_trade": existing_data.get("last_trade", {}),
+                "trend_analysis": {
+                    "spy_price": latest_price,
+                    "spy_sma_200": sma_200,
+                    "trend_status": "neutral",
+                    "margin_band": margin
+                }
+            })
         send_telegram_message(
             f"Index is not significantly below or above 200-SMA. No {symbol} shares sold or bought"
         )
