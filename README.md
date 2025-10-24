@@ -605,8 +605,8 @@ margin_control_config = {
 First, clone the repository and navigate into the project directory:
 
 ```bash
-git clone https://github.com/yourusername/hfea-alpaca-strategy.git
-cd hfea-alpaca-strategy
+git clone https://github.com/cluttmann/multi_strategy_portfolio.git
+cd multi_strategy_portfolio
 pip install -r requirements.txt
 ```
 
