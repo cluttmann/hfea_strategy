@@ -602,7 +602,8 @@ def check_margin_conditions(api):
             spy_sma = spy_data["sma200"]
             result["metrics"]["spx_price"] = spy_price  # Keep key name for compatibility
             result["metrics"]["spx_sma"] = spy_sma
-            result["gate_results"]["market_trend"] = spy_price > spy_sma
+            # Use 1% margin band for consistent trend filtering with SPXL strategy
+            result["gate_results"]["market_trend"] = spy_price > spy_sma * (1 + margin)
         except Exception as e:
             result["errors"].append(f"Market trend check failed: {e}")
             return result
@@ -726,7 +727,7 @@ def calculate_monthly_investments(api, margin_result, env="live"):
         else:
             continue
         
-        # Check if currently bearish (below SMA)
+        # Check if currently bearish (significantly below SMA with 1% margin band)
         try:
             # Get all market data at once (efficient single fetch/read)
             market_data = get_all_market_data(index_symbol)
@@ -735,7 +736,8 @@ def calculate_monthly_investments(api, margin_result, env="live"):
             
             sma_200 = market_data["sma200"]
             latest_price = market_data["price"]
-            is_bearish = latest_price < sma_200
+            # Use 1% margin band for consistent trend filtering with SPXL strategy
+            is_bearish = latest_price < sma_200 * (1 - margin)
             
             if is_bearish:
                 # Subtract reserved amount
@@ -826,11 +828,6 @@ def load_balances(env="live"):
         print(f"Warning: Could not load Firestore balances ({env}) (local testing?): {e}")
         # Return empty dict for local testing without Firestore
     return balances
-
-
-def update_balance_field(strategy, value):
-    doc_ref = get_firestore_client().collection("strategy-balances").document(strategy)
-    doc_ref.update({"invested": value})
 
 
 # 9-Sig Strategy Data Management Functions
@@ -3209,24 +3206,27 @@ def monthly_dual_momentum_strategy(api, force_execute=False, investment_calc=Non
     print(f"Current position: {current_position}, Shares: {shares_held:.4f}")
     print(f"Total invested: ${total_invested:.2f}")
     
-    # Calculate 12-month returns for SPUU and EFO
-    print("Calculating 12-month momentum...")
-    spuu_return = calculate_12_month_returns(api, "SPUU")
-    efo_return = calculate_12_month_returns(api, "EFO")
+    # Calculate 12-month returns for underlying assets (SPY and EFA)
+    # Note: We compare the underlying assets for momentum, but invest in leveraged versions
+    print("Calculating 12-month momentum on underlying assets...")
+    spy_return = calculate_12_month_returns(api, "SPY")
+    efa_return = calculate_12_month_returns(api, "EFA")
     
-    if spuu_return is None or efo_return is None:
+    if spy_return is None or efa_return is None:
         error_msg = "Failed to calculate momentum returns - skipping strategy"
         print(error_msg)
         send_telegram_message(f"Dual Momentum Error: {error_msg}")
         return error_msg
     
-    # Determine relative momentum winner
-    if spuu_return > efo_return:
-        winner = "SPUU"
-        winner_return = spuu_return
+    # Determine relative momentum winner (compare underlying assets)
+    if spy_return > efa_return:
+        winner = "SPUU"  # Invest in SPUU when SPY wins
+        winner_return = spy_return  # Use underlying return for absolute momentum check
+        winner_underlying = "SPY"
     else:
-        winner = "EFO"
-        winner_return = efo_return
+        winner = "EFO"  # Invest in EFO when EFA wins
+        winner_return = efa_return  # Use underlying return for absolute momentum check
+        winner_underlying = "EFA"
     
     # Apply absolute momentum check
     if winner_return > 0:
@@ -3234,9 +3234,9 @@ def monthly_dual_momentum_strategy(api, force_execute=False, investment_calc=Non
     else:
         target_position = "BND"
     
-    print(f"SPUU 12-month return: {spuu_return:.2%}")
-    print(f"EFO 12-month return: {efo_return:.2%}")
-    print(f"Winner: {winner} ({winner_return:.2%})")
+    print(f"SPY 12-month return: {spy_return:.2%}")
+    print(f"EFA 12-month return: {efa_return:.2%}")
+    print(f"Winner: {winner} ({winner_return:.2%}, underlying: {winner_underlying})")
     print(f"Target position: {target_position}")
     
     # Check if we need to switch positions
@@ -3276,10 +3276,10 @@ def monthly_dual_momentum_strategy(api, force_execute=False, investment_calc=Non
                 
                 # Enhanced Telegram message with detailed decision rationale
                 telegram_msg = f"🎯 Dual Momentum Strategy Decision\n\n"
-                telegram_msg += f"📊 Momentum Analysis:\n"
-                telegram_msg += f"• SPUU 12-month return: {spuu_return:.2%}\n"
-                telegram_msg += f"• EFO 12-month return: {efo_return:.2%}\n"
-                telegram_msg += f"• Relative winner: {winner} ({winner_return:.2%})\n\n"
+                telegram_msg += f"📊 Momentum Analysis (Underlying Assets):\n"
+                telegram_msg += f"• SPY 12-month return: {spy_return:.2%}\n"
+                telegram_msg += f"• EFA 12-month return: {efa_return:.2%}\n"
+                telegram_msg += f"• Relative winner: {winner} ({winner_return:.2%}, underlying: {winner_underlying})\n\n"
                 telegram_msg += f"🎯 Decision Logic:\n"
                 if winner_return > 0:
                     telegram_msg += f"• Absolute momentum: POSITIVE ({winner_return:.2%} > 0%)\n"
@@ -3303,9 +3303,10 @@ def monthly_dual_momentum_strategy(api, force_execute=False, investment_calc=Non
                     "shares_held": shares_to_buy,
                     "last_trade_date": datetime.datetime.now().strftime("%Y-%m-%d"),
                     "last_momentum_check": {
-                        "spuu_return": spuu_return,
-                        "efo_return": efo_return,
+                        "spy_return": spy_return,
+                        "efa_return": efa_return,
                         "winner": winner,
+                        "winner_underlying": winner_underlying,
                         "signal": target_position
                     }
                 }, env)
@@ -3339,9 +3340,10 @@ def monthly_dual_momentum_strategy(api, force_execute=False, investment_calc=Non
                     "shares_held": new_total_shares,
                     "last_trade_date": datetime.datetime.now().strftime("%Y-%m-%d"),
                     "last_momentum_check": {
-                        "spuu_return": spuu_return,
-                        "efo_return": efo_return,
+                        "spy_return": spy_return,
+                        "efa_return": efa_return,
                         "winner": winner,
+                        "winner_underlying": winner_underlying,
                         "signal": target_position
                     }
                 }, env)
@@ -3364,9 +3366,9 @@ def monthly_dual_momentum_strategy(api, force_execute=False, investment_calc=Non
     summary_msg += f"📈 Current Value: ${final_position_value['total_value']:.2f}\n"
     summary_msg += f"📊 Strategy Return: {strategy_return:.2%}\n\n"
     summary_msg += f"🔍 Decision Recap:\n"
-    summary_msg += f"• SPUU Return: {spuu_return:.2%}\n"
-    summary_msg += f"• EFO Return: {efo_return:.2%}\n"
-    summary_msg += f"• Winner: {winner} ({winner_return:.2%})\n"
+    summary_msg += f"• SPY Return: {spy_return:.2%}\n"
+    summary_msg += f"• EFA Return: {efa_return:.2%}\n"
+    summary_msg += f"• Winner: {winner} ({winner_return:.2%}, underlying: {winner_underlying})\n"
     summary_msg += f"• Final Choice: {target_position} {'(momentum winner)' if target_position == winner else '(safety bonds)'}"
     
     print(summary_msg)
@@ -3437,8 +3439,9 @@ def monthly_sector_momentum_strategy(api, force_execute=False, investment_calc=N
             send_telegram_message(f"Sector Momentum Error: {error_msg}")
             return error_msg
         
-        spy_above_sma_current = spy_price > spy_sma
-        print(f"SPY: ${spy_price:.2f}, 200-SMA: ${spy_sma:.2f}, Above SMA: {spy_above_sma_current}")
+        # Use 1% margin band for consistent trend filtering with SPXL strategy
+        spy_above_sma_current = spy_price > spy_sma * (1 + margin)
+        print(f"SPY: ${spy_price:.2f}, 200-SMA: ${spy_sma:.2f}, Margin: {margin:.1%}, Above SMA: {spy_above_sma_current}")
         
     except Exception as e:
         error_msg = f"Error checking SPY SMA: {e}"
