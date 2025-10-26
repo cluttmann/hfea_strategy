@@ -1,6 +1,6 @@
 # Investment Strategy with Alpaca and Google Cloud Functions
 
-This project contains a set of Python Cloud Functions for managing a multi-strategy portfolio using Alpaca's trading API. The portfolio consists of five distinct investment strategies: **High-Frequency Equity Allocation (HFEA)**, **S&P 500 with 200-SMA**, **9-Sig Strategy (Jason Kelly Methodology)**, **Dual Momentum Strategy (Gary Antonacci)**, and **Sector Momentum Rotation Strategy**.
+This project contains a set of Python Cloud Functions for managing a multi-strategy portfolio using Alpaca's trading API. The portfolio consists of six distinct investment strategies: **High-Frequency Equity Allocation (HFEA)**, **Golden HFEA Lite**, **S&P 500 with 200-SMA**, **9-Sig Strategy (Jason Kelly Methodology)**, **Dual Momentum Strategy (Gary Antonacci)**, and **Sector Momentum Rotation Strategy**.
 
 ## Portfolio Allocation
 
@@ -74,20 +74,24 @@ This implementation is based on the classic "Golden Butterfly" portfolio concept
 
 #### **Strategy Overview:**
 The Dual Momentum strategy, developed by Gary Antonacci, is a sophisticated tactical asset allocation approach that combines two momentum principles:
-- **Relative Momentum**: Comparing performance between two assets (SPUU vs EFO)
+- **Relative Momentum**: Comparing performance between two underlying assets (SPY vs EFA)
 - **Absolute Momentum**: Determining if the winner has positive trend (> 0% return)
 
-This strategy uses leveraged ETFs for enhanced returns:
-- **SPUU** (ProShares Ultra S&P 500) - 2x leveraged S&P 500
-- **EFO** (ProShares Ultra MSCI EAFE) - 2x leveraged international developed markets
-- **BND** (Vanguard Total Bond Market ETF) - Safety asset during downtrends
+This strategy compares the underlying assets for momentum signals but invests in leveraged ETFs for enhanced returns:
+- **Momentum Analysis**: Calculates 12-month returns on SPY (S&P 500) and EFA (international developed markets)
+- **Investment Vehicles**:
+  - **SPUU** (ProShares Ultra S&P 500) - 2x leveraged S&P 500
+  - **EFO** (ProShares Ultra MSCI EAFE) - 2x leveraged international developed markets
+  - **BND** (Vanguard Total Bond Market ETF) - Safety asset during downtrends
 
 #### **Approach in the Script:**
 - **Monthly Rebalancing**: On the first trading day of each month, the strategy:
-  1. Calculates 12-month returns (252 trading days) for both SPUU and EFO
-  2. Identifies the relative momentum winner (higher return)
-  3. Applies absolute momentum filter: if winner's return > 0%, invest in winner; otherwise invest in BND (bonds)
+  1. Calculates 12-month returns (252 trading days) for the underlying assets SPY and EFA
+  2. Identifies the relative momentum winner (which underlying asset has higher return)
+  3. Applies absolute momentum filter: if winner's return > 0%, invest in corresponding leveraged ETF (SPUU or EFO); otherwise invest in BND (bonds)
   4. Executes position switch if signal changes, or adds new investment to existing position
+
+- **Why Compare Underlying Assets**: By comparing the underlying assets (SPY vs EFA) rather than the leveraged ETFs themselves, the strategy gets cleaner momentum signals that aren't affected by leverage decay, rebalancing effects, or volatility in the leveraged products.
 
 - **Position Management**: The strategy maintains 100% allocation to a single position at all times. When the momentum signal changes, it sells the entire current position and buys the new target position. This ensures full exposure to the strongest trending asset while providing downside protection through bonds during negative momentum periods.
 
@@ -105,7 +109,7 @@ This implementation is based on Gary Antonacci's research and community discussi
 - [r/LETFs: Combining Dual Momentum with LETFs](https://www.reddit.com/r/LETFs/comments/rwcoxk/combining_dual_momentum_with_the_principles_of/)
 - [r/LETFs: Leveraged Dual Momentum Backtest](https://www.reddit.com/r/LETFs/comments/1jj4tad/leveraged_dual_momentum_backtest/)
 
-### 5. Sector Momentum Rotation Strategy
+### 4. Sector Momentum Rotation Strategy
 
 #### **Strategy Overview:**
 The Sector Momentum Rotation Strategy exploits the documented persistence of sector-level momentum driven by economic cycles, investor flows, and fundamental factors. Research shows sector leadership persists for 3-6 months, providing tradable opportunities. Studies by Faber and O'Shaughnessy demonstrate that momentum strategies outperformed buy-and-hold approximately 70% of the time across 80+ years of data.
@@ -164,7 +168,7 @@ Composite Score = (0.40 × 1M_return) + (0.20 × 3M_return) +
 - **Equal Weighting**: 33.33% allocation per sector prevents over-concentration
 - **Bond Safety**: Automatic switch to SCHZ during bear markets preserves capital
 
-### 2. S&P 500 with 200-SMA Strategy
+### 5. S&P 500 with 200-SMA Strategy
 
 #### **Strategy Overview:**
 The S&P 500 with 200-SMA strategy is a trend-following investment approach that uses the 200-day Simple Moving Average (SMA) as a signal for entering or exiting the market. The 200-SMA is a widely-used technical indicator that smooths out daily price fluctuations and highlights the underlying trend of the market.
@@ -181,7 +185,7 @@ The basic premise of this strategy is that when the S&P 500 index is above its 2
 #### **Expected Returns:**
 - The S&P 500 with 200-SMA strategy aims to enhance returns through trend-following and risk management. By avoiding major market drawdowns through strategic exits during downtrends, the strategy seeks to capture the majority of market upside while protecting capital during bear markets. The use of 3x leverage (SPXL) amplifies returns during bullish periods while the 200-SMA timing mechanism provides downside protection. Historical backtests of similar strategies have shown improved risk-adjusted returns compared to buy-and-hold approaches.
 
-### 3. 9-Sig Strategy (Jason Kelly Methodology)
+### 6. 9-Sig Strategy (Jason Kelly Methodology)
 
 #### **Strategy Overview:**
 The 9-Sig strategy is based on Jason Kelly's methodology from his book "The 3% Signal". It's a systematic approach to managing a TQQQ (3x leveraged NASDAQ-100) and AGG (iShares Core U.S. Aggregate Bond ETF) portfolio with built-in crash protection. The strategy aims for 9% quarterly growth while maintaining an 80/20 allocation between TQQQ and AGG.
@@ -282,7 +286,7 @@ Result: Hold TQQQ position during market crash
 
 ## Conclusion
 
-All five strategies offer unique ways to potentially enhance returns, but they come with their own sets of risks and assumptions. The HFEA strategy seeks to maximize growth through a balanced but leveraged approach, while the S&P 500 with 200-SMA strategy aims to capture market gains while avoiding major downturns. The 9-Sig strategy provides systematic growth with built-in crash protection and systematic rebalancing. The Dual Momentum strategy combines global diversification with momentum-based timing to capture trending markets while protecting capital during downturns. The Sector Momentum strategy exploits sector rotation cycles through multi-period momentum analysis with trend filtering.
+All six strategies offer unique ways to potentially enhance returns, but they come with their own sets of risks and assumptions. The HFEA strategy seeks to maximize growth through a balanced but leveraged approach, while the Golden HFEA Lite strategy combines equity growth with bond protection and gold diversification. The S&P 500 with 200-SMA strategy aims to capture market gains while avoiding major downturns. The 9-Sig strategy provides systematic growth with built-in crash protection and systematic rebalancing. The Dual Momentum strategy combines global diversification with momentum-based timing to capture trending markets while protecting capital during downturns. The Sector Momentum strategy exploits sector rotation cycles through multi-period momentum analysis with trend filtering.
 
 Together, these strategies provide a comprehensive blend of aggressive growth and risk management:
 - **HFEA (18.75%)**: Three-asset leveraged portfolio (UPRO 45%, TMF 25%, KMLM 30%) with enhanced diversification through managed futures exposure
@@ -292,7 +296,7 @@ Together, these strategies provide a comprehensive blend of aggressive growth an
 - **Dual Momentum (10%)**: Tactical allocation between SPUU/EFO/BND using relative and absolute momentum
 - **Sector Momentum (10%)**: Multi-period momentum rotation across top 3 sector ETFs with SPY 200-SMA trend filtering
 
-Each strategy has been carefully selected and optimized based on historical backtests and current market research. The diversification across five different approaches—equity/bond/futures leverage, trend-following, systematic rebalancing, momentum-based tactical allocation, and sector rotation—helps reduce overall portfolio risk while maintaining strong growth potential.
+Each strategy has been carefully selected and optimized based on historical backtests and current market research. The diversification across six different approaches—equity/bond/futures leverage, trend-following, systematic rebalancing, momentum-based tactical allocation, and sector rotation—helps reduce overall portfolio risk while maintaining strong growth potential.
 
 ## Index Alert System
 
