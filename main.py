@@ -687,12 +687,12 @@ def calculate_monthly_investments(api, margin_result, env="live"):
     Calculate dynamic monthly investment amounts based on available cash and margin.
     
     Steps:
-    1. Get total cash from account
+    1. Get total cash from account (can be negative if margin is already in use)
     2. Load Firestore balances for all SMA strategies  
     3. Check which strategies are currently below their SMA (bearish)
     4. Subtract reserved amounts only for bearish strategies
-    5. Add margin if approved (equity × 10%)
-    6. Apply Regulation T check (margin ≤ available_cash for 50/50 rule)
+    5. Calculate available margin (equity × 10%), accounting for existing margin debt
+    6. If cash is negative, subtract that amount from available margin capacity
     7. Split total by strategy percentages
     
     Args:
@@ -701,10 +701,11 @@ def calculate_monthly_investments(api, margin_result, env="live"):
     
     Returns:
         dict: {
-            "total_cash": float,           # Total cash in account
+            "total_cash": float,           # Total cash in account (can be negative if using margin)
             "total_reserved": float,       # Total reserved for bearish strategies
-            "total_available": float,      # Total cash - reserved
-            "margin_approved": float,      # Margin amount (0 if disabled)
+            "total_available": float,      # Total cash - reserved (non-negative)
+            "margin_approved": float,      # Available margin amount (accounts for existing margin debt)
+            "used_margin": float,          # Amount of margin already in use (0 if cash >= 0)
             "total_investing": float,      # Total available + margin
             "strategy_amounts": dict,      # Amount per strategy
             "reserved_amounts": dict       # What was reserved per strategy
@@ -752,13 +753,27 @@ def calculate_monthly_investments(api, margin_result, env="live"):
     total_reserved = sum(reserved_amounts.values())
     available_cash = max(0, total_cash - total_reserved)  # Ensure non-negative
     
-    # Step 6: Add margin if approved
+    # Step 6: Calculate margin if approved, accounting for existing margin usage
+    # If cash is negative, that represents margin debt already in use
     target_margin = margin_result.get("target_margin", 0)
+    margin_approved = 0
+    used_margin = 0
+    
     if target_margin > 0 and equity > 0:
-        margin_available = equity * target_margin
-        # Our +10% cap automatically satisfies Regulation T (50% rule)
-        # No need to cap - margin is ADDITIONAL to available cash
-        margin_approved = margin_available
+        # Calculate total margin capacity based on equity
+        total_margin_capacity = equity * target_margin
+        
+        # Calculate how much margin is already being used (if cash is negative)
+        if total_cash < 0:
+            used_margin = abs(total_cash)  # Convert negative cash to positive margin debt amount
+            print(f"Existing margin debt detected: ${used_margin:.2f}")
+        
+        # Calculate remaining available margin (capacity minus what's already used)
+        remaining_margin = max(0, total_margin_capacity - used_margin)
+        margin_approved = remaining_margin
+        
+        if used_margin > 0:
+            print(f"Margin capacity: ${total_margin_capacity:.2f}, Used: ${used_margin:.2f}, Available: ${remaining_margin:.2f}")
     else:
         margin_approved = 0
     
@@ -775,6 +790,7 @@ def calculate_monthly_investments(api, margin_result, env="live"):
         "total_reserved": total_reserved,
         "total_available": available_cash,
         "margin_approved": margin_approved,
+        "used_margin": used_margin,
         "total_investing": total_investing,
         "strategy_amounts": strategy_amounts,
         "reserved_amounts": reserved_amounts
@@ -1022,6 +1038,27 @@ def make_monthly_nine_sig_contributions(api, force_execute=False, investment_cal
         print(action_taken)
         return action_taken
     
+    # Check projected leverage after investment to ensure we don't exceed 1.14x
+    if target_margin > 0:  # Only check if margin is enabled
+        portfolio_value = metrics.get("portfolio_value", 0)
+        current_equity = metrics.get("equity", 0)
+        
+        if portfolio_value > 0 and current_equity > 0:
+            projected_portfolio_value = portfolio_value + investment_amount
+            projected_equity = current_equity
+            
+            if projected_equity > 0:
+                projected_leverage = projected_portfolio_value / projected_equity
+                
+                if projected_leverage >= margin_control_config["max_leverage"]:
+                    action_taken = f"Skipped - Projected leverage ({projected_leverage:.3f}x) would exceed limit ({margin_control_config['max_leverage']:.2f}x)"
+                    send_margin_summary_message(margin_result, "9-Sig", action_taken, investment_calc)
+                    print(f"Current leverage: {leverage:.3f}x, Projected leverage: {projected_leverage:.3f}x")
+                    print(action_taken)
+                    return action_taken
+                else:
+                    print(f"9-Sig: Leverage check - Current {leverage:.3f}x → Projected {projected_leverage:.3f}x (limit: {margin_control_config['max_leverage']:.2f}x)")
+    
     # ALL monthly contributions go to AGG only (core 3Sig rule)
     # Load current strategy state from Firestore
     balances = load_balances(env)
@@ -1141,6 +1178,27 @@ def make_monthly_buys_golden_hfea_lite(api, force_execute=False, investment_calc
         print(f"Golden HFEA Lite: Skipping investment - amount ${investment_amount:.2f} below minimum")
         send_telegram_message(f"Golden HFEA Lite: Skipping investment - amount ${investment_amount:.2f} below minimum")
         return "Golden HFEA Lite: Skipping investment - amount below minimum"
+    
+    # Check projected leverage after investment to ensure we don't exceed 1.14x
+    if target_margin > 0:  # Only check if margin is enabled
+        portfolio_value = metrics.get("portfolio_value", 0)
+        current_equity = metrics.get("equity", 0)
+        
+        if portfolio_value > 0 and current_equity > 0:
+            projected_portfolio_value = portfolio_value + investment_amount
+            projected_equity = current_equity
+            
+            if projected_equity > 0:
+                projected_leverage = projected_portfolio_value / projected_equity
+                
+                if projected_leverage >= margin_control_config["max_leverage"]:
+                    action_taken = f"Skipped - Projected leverage ({projected_leverage:.3f}x) would exceed limit ({margin_control_config['max_leverage']:.2f}x)"
+                    send_telegram_message(f"Golden HFEA Lite: {action_taken}")
+                    print(f"Current leverage: {leverage:.3f}x, Projected leverage: {projected_leverage:.3f}x")
+                    print(f"Golden HFEA Lite: {action_taken}")
+                    return action_taken
+                else:
+                    print(f"Golden HFEA Lite: Leverage check - Current {leverage:.3f}x → Projected {projected_leverage:.3f}x (limit: {margin_control_config['max_leverage']:.2f}x)")
     
     # Get current Golden HFEA Lite allocations
     (
@@ -1312,6 +1370,54 @@ def make_monthly_buys(api, force_execute=False, investment_calc=None, margin_res
         send_margin_summary_message(margin_result, "HFEA", action_taken, investment_calc)
         print(action_taken)
         return action_taken
+    
+    # Check projected leverage after investment to ensure we don't exceed 1.14x
+    if target_margin > 0:  # Only check if margin is enabled
+        portfolio_value = metrics.get("portfolio_value", 0)
+        current_equity = metrics.get("equity", 0)
+        current_cash = metrics.get("cash", 0)
+        
+        if portfolio_value > 0 and current_equity > 0:
+            # Calculate projected values after investment
+            # When investing, regardless of cash/margin:
+            # - Portfolio value increases by investment amount (new positions purchased)
+            # - Cash decreases by investment amount (may become more negative if using margin)
+            # - Equity remains unchanged immediately after purchase
+            #   (Equity = Portfolio Value + Cash; both change by same amount: +investment -investment = 0)
+            
+            # IMPORTANT: Reserved cash (from bearish strategies) is still physically in Alpaca
+            # - Alpaca's portfolio_value and equity include ALL cash (reserved + available)
+            # - Reserved cash reduces available_cash for investment calculation, but is still part of account
+            # - This leverage calculation correctly uses actual portfolio_value from Alpaca
+            # - The investment_amount already accounts for reserved cash (via available_cash)
+            
+            projected_portfolio_value = portfolio_value + investment_amount
+            projected_equity = current_equity  # Unchanged immediately after purchase
+            
+            # Calculate projected leverage: Portfolio Value / Equity
+            if projected_equity > 0:
+                projected_leverage = projected_portfolio_value / projected_equity
+                
+                # Get reserved cash info for debug output
+                total_reserved = investment_calc.get("total_reserved", 0)
+                
+                # Debug output showing actual values used
+                print(f"Leverage projection details:")
+                print(f"  Portfolio Value: ${portfolio_value:.2f}, Equity: ${current_equity:.2f}, Cash: ${current_cash:.2f}")
+                if total_reserved > 0:
+                    print(f"  Reserved Cash (Firestore): ${total_reserved:.2f} (still in Alpaca account)")
+                print(f"  Investment Amount: ${investment_amount:.2f} (from available cash + margin)")
+                print(f"  Projected Portfolio Value: ${projected_portfolio_value:.2f}")
+                print(f"  Projected Leverage: {projected_leverage:.3f}x")
+                
+                if projected_leverage >= margin_control_config["max_leverage"]:
+                    action_taken = f"Skipped - Projected leverage ({projected_leverage:.3f}x) would exceed limit ({margin_control_config['max_leverage']:.2f}x)"
+                    send_margin_summary_message(margin_result, "HFEA", action_taken, investment_calc)
+                    print(f"Current leverage: {leverage:.3f}x, Projected leverage: {projected_leverage:.3f}x")
+                    print(action_taken)
+                    return action_taken
+                else:
+                    print(f"Leverage check: Current {leverage:.3f}x → Projected {projected_leverage:.3f}x (limit: {margin_control_config['max_leverage']:.2f}x)")
     
     # Proceed with investment - we have sufficient funds
     # Get current portfolio allocations and values from get_hfea_allocations
@@ -2109,6 +2215,27 @@ def monthly_buying_sma(api, symbol, force_execute=False, investment_calc=None, m
             send_margin_summary_message(margin_result, f"{symbol} SMA", action_taken, investment_calc)
             print(action_taken)
             return action_taken
+        
+        # Check projected leverage after investment to ensure we don't exceed 1.14x
+        if target_margin > 0:  # Only check if margin is enabled
+            portfolio_value = metrics.get("portfolio_value", 0)
+            current_equity = metrics.get("equity", 0)
+            
+            if portfolio_value > 0 and current_equity > 0:
+                projected_portfolio_value = portfolio_value + investment_amount
+                projected_equity = current_equity
+                
+                if projected_equity > 0:
+                    projected_leverage = projected_portfolio_value / projected_equity
+                    
+                    if projected_leverage >= margin_control_config["max_leverage"]:
+                        action_taken = f"Skipped - Projected leverage ({projected_leverage:.3f}x) would exceed limit ({margin_control_config['max_leverage']:.2f}x)"
+                        send_margin_summary_message(margin_result, f"{symbol} SMA", action_taken, investment_calc)
+                        print(f"Current leverage: {leverage:.3f}x, Projected leverage: {projected_leverage:.3f}x")
+                        print(action_taken)
+                        return action_taken
+                    else:
+                        print(f"Leverage check: Current {leverage:.3f}x → Projected {projected_leverage:.3f}x (limit: {margin_control_config['max_leverage']:.2f}x)")
         
         # Execute purchase
         price = get_latest_trade(api, symbol)
